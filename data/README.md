@@ -7,19 +7,16 @@ O corpus de comentários do YouTube foi coletado via API pública.
 *   **Disponibilidade:** Os dados e análises estão em https://github.com/FredPedrosa/youtube_circumplex 
 
 ## 2. Dados PANAS (Estudo 2)
-*   **Fonte:** Dados originais coletados pelo autor em pesquisa anterior (Pedrosa et al., 2025) https://osf.io/preprints/psyarxiv/2a3y6_v2.
+*   **Fonte:** Dados originais coletados pelo autor em pesquisa anterior ([Pedrosa et al., 2025](https://osf.io/preprints/psyarxiv/2a3y6_v2)).
 *   **Acesso:** Não temos permissão para disponibilizá-los.
   
 ## 3. Dados Fisiológicos (Estudo 3)
 Os dados brutos de condutância da pele (GSR/EDA) são provenientes do dataset **EMO2018-SCR**.
-*   **Fonte Original:** Juuse et al. (2024).
+*   **Fonte Original:** [Juuse et al. (2024)](https://doi.org/10.1016/j.actpsy.2024.104573).
 *   **Acesso:** Os dados estão disponíveis publicamente no OSF (Open Science Framework).
-*   **Link:** [Insira o link do OSF do artigo da Liina Juuse aqui]
+*   **Link:** [Repositório ](https://osf.io/ajycg/overview)]
 *   **Instrução:** Baixe o arquivo `dat4.csv` e salve nesta pasta para rodar o script `analysis_GSR.Rmd`.
 
 ## 4. Dados Musicais - MEET (Estudo 4)
-*   **Fonte:** Dados originais coletados pelo grupo de pesquisa (Nunes-Silva & Pedrosa).
-*   **Acesso:** O dataset anonimizado com as respostas dos 200 participantes está disponível no arquivo `MEET_responses_anonymized.csv`.
-
----
-**Nota:** Para reproduzir as análises, certifique-se de que os arquivos `.csv` citados nos scripts estejam localizados neste diretório ou ajuste o `setwd()` nos arquivos RMarkdown.
+*   **Fonte:** Dados originais coletados pelo grupo de pesquisa [(Nunes-Silva et al., 2025)](https://doi.org/10.1080/09298215.2025.2607364).
+*   **Acesso:** O dataset anonimizado com as respostas dos 200 participantes está disponível no [Mendeley](http://doi.org/10.17632/y2j5ybptzd.1).
