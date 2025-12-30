@@ -94,17 +94,3 @@ Se você utilizar os códigos ou a taxonomia proposta, por favor cite:
 *   Email: [frederico.musicoterapia@gmail.com](mailto:frederico.musicoterapia@gmail.com)
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-```r
-source("scripts/00_setup.R")
