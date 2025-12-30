@@ -1,0 +1,514 @@
+---
+title: "Análise Fisiológica (CDA) e Estrutura Hierárquica do Afeto"
+author: "Frederico Pedrosa"
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    latex_engine: xelatex  
+    highlight: tango
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: hide
+    theme: cosmo
+    highlight: tango
+header-includes:
+  - \usepackage{placeins} 
+---
+
+# Introdução e Objetivos do Estudo
+
+O presente estudo investiga a estrutura latente da resposta fisiológica emocional e sua relação com as dimensões afetivas de Valência e Arousal. Utilizando o conjunto de dados **EMO2018-SCR** (Juuse et al., 2024), analisamos a condutância da pele (*Galvanic Skin Response* - GSR) de **102 participantes** expostos a estímulos multimodais (expressões faciais e palavras) que evocam diferentes categorias emocionais.
+
+O objetivo central é testar a hipótese da **Estrutura Hierárquica do Afeto** no domínio biológico. Argumentamos que, antes da diferenciação em dimensões de valência e arousal, existe um **Fator Geral de Intensidade Fisiológica** que governa a mobilização simpática.
+
+
+## O que estamos testando?
+
+Esta análise busca responder a três perguntas para a validação da hipótese:
+
+1. **Existência e Robustez do Fator Geral (PCA)**: As diferentes métricas de condutância da pele convergem para uma única dimensão latente de Intensidade Fisiológica? Se a hipótese hierárquica estiver correta, este fator deve explicar a vasta maioria da variância compartilhada, discriminando linearmente estados de alta energia (ex: Raiva) de baixa energia (ex: Neutro).
+
+**Interação Contextual (LMER)**: A Intensidade Fisiológica responde ao Arousal normativo de forma linear (como prevê o modelo Circumplexo clássico) ou é dependente da Valência?
+Hipótese: Espera-se encontrar uma interação significativa, onde o efeito do Arousal na fisiologia é modulado pela qualidade hedônica do estímulo - dado que arousal foi o terceiro componente encontrado nos dados semânticos.
+
+**Tipologia da Reatividade (LPA)**: A intensidade fisiológica se manifesta em padrões qualitativamente distintos?
+Nova Hipótese: Utilizando Análise de Perfis Latentes (LPA), investigamos se o sistema nervoso simpático opera em "modos" discretos. Espera-se identificar um perfil de "Alta Magnitude" que seja predominantemente composto por emoções de alta mobilização (Raiva, Felicidade, Medo), segregando-as biologicamente do estado Neutro. Isso confirmaria que a Intensidade é a dimensão organizadora primária da resposta corporal.
+
+
+# Análises estatísticas
+
+## Carregar pacotes
+
+```{r setup, message=FALSE, warning=FALSE}
+library(dplyr)
+library(readxl)
+library(lmerTest)
+library(janitor)
+library(psych)
+library(stringr)
+library(ggeffects)
+library(ggplot2)
+library(performance)
+library(emmeans)
+library(tidyverse)
+library(tidyLPA)
+library(multcomp)
+```
+
+## Carregar os dados
+
+```{r dados}
+# ==============================================================================
+# 1. CARREGAR E PADRONIZAR DADOS FISIOLÓGICOS
+# ==============================================================================
+dat4 <- read.csv("~/PIBIT2025/Circumplex/BasesDados/EMO2018-SCR/dat4.csv")%>%
+  janitor::clean_names() %>%
+  # PADRONIZAÇÃO CRÍTICA:
+  mutate(
+    # Transformar emoção para MAIÚSCULO para bater com o excel
+    emo_id_join = toupper(emo_id), 
+    # Garantir que exp_id (Face/Word) esteja padronizado (Title Case)
+    exp_id_join = str_to_title(exp_id) 
+  )
+
+# ==============================================================================
+# 2. CARREGAR E PADRONIZAR DADOS NORMATIVOS
+# ==============================================================================
+normative_ratings <- read_excel("~/PIBIT2025/Circumplex/BasesDados/EMO2018-SCR/arousal-valence-ratings.xlsx")
+
+
+normative_clean <- normative_ratings %>%
+  # Selecionar apenas o que importa
+  dplyr::select(EmoId, ExpId, Valence, Arousal) %>%
+  mutate(
+    # Transformar para MAIÚSCULO para bater com o dat4
+    emo_id_join = toupper(EmoId),
+    # Garantir Title Case ("Face", "Word")
+    exp_id_join = str_to_title(ExpId)
+  ) %>%
+  # Renomear as métricas para não confundir
+  rename(
+    norm_valence = Valence,
+    norm_arousal = Arousal
+  )
+
+# ==============================================================================
+# 3. CONECTANDO OS DOIS DATAS
+# ==============================================================================
+# Usamos left_join para manter todos os 102 participantes do dat4
+# Usamos DUAS chaves: Emoção E Tipo (Face/Word)
+data_full_n102 <- left_join(dat4, normative_clean, by = c("emo_id_join", "exp_id_join"))
+
+cat("Número de casos com Valência Normativa válida:", sum(!is.na(data_full_n102$norm_valence)), "\n")
+
+```
+
+## Verificação de Hipótese de um FG de Intensidade Fisiológica
+
+Para a análise da intensidade fisiológica, optou-se exclusivamente pelas métricas derivadas da Análise de Decomposição Contínua (CDA - Continuous Decomposition Analysis) (Benedek & Kaernbach, 2010). Diferentemente dos métodos clássicos de *Trough-to-Peak (TTP)*, o CDA permite a separação matemática entre o nível tônico (atividade de fundo) e o componente fásico (resposta evocada pelo evento), além de corrigir distorções causadas pela superposição de respostas consecutivas.
+
+Foram selecionadas cinco métricas que capturam diferentes facetas da magnitude da resposta: CDA.nSCR (frequência), CDA.AmpSum (soma das amplitudes), CDA.SCR (média da atividade fásica), CDA.ISCR (integral/área sob a curva) e CDA.PhasicMax (pico máximo). A alta correlação esperada entre estas métricas justifica a extração de um componente principal (PCA) para representar o Fator Geral de Intensidade Fisiológica.
+
+### Teste de pressupostos
+
+```{r pressure}
+# ==============================================================================
+# 4.ESCOLHA DAS VARIÁVEIS DE CDA
+# ==============================================================================
+physio_vars <- c("cda_n_scr", "cda_amp_sum", "cda_scr", "cda_iscr", "cda_phasic_max")
+
+# Preparar matriz sem NAs nas colunas fisiológicas
+data_valid_physio <- data_full_n102 %>%
+  filter(!is.na(cda_scr)) # Garante que tem dados de SCR
+physio_matrix <- scale(data_valid_physio[, physio_vars])
+
+
+# ==============================================================================
+# 5.TESTE DE CORRELAÇÃO
+# ==============================================================================
+normal <- MVN::mvn(physio_matrix, univariate_test = "AD")
+print(normal$univariate_normality)
+cor <- cor(physio_matrix, method = "spearman")
+print(cor)
+
+# ==============================================================================
+# 6.Fatorabilidade
+# ==============================================================================
+
+KMO(cor)
+psych::fa.parallel(physio_matrix)
+
+```
+## Análise de Componentes Princiapis
+
+```{r PCA}
+pca_res <- principal(physio_matrix, nfactors=1, rotate="none", scores=TRUE)
+print(pca_res$loadings)
+
+# Salvar o escore
+data_valid_physio$physio_intensity <- as.numeric(pca_res$scores)
+```
+## Validação do Fator Geral por Categoria
+
+Antes de testar a interação dimensional, verificamos se o Fator Geral de Intensidade Fisiológica (PC1) discrimina adequadamente as categorias emocionais discretas. Espera-se que emoções de alta energia (ex: Raiva, Felicidade) apresentem escores significativamente maiores que estados de baixa energia (ex: Neutro, Tristeza).
+
+```{r categoria_emocional}
+# 1. Modelo Misto para Categorias
+# Testamos se a intensidade muda conforme a emoção, controlando pelo participante
+model_emotion_cat <- lmerTest::lmer(physio_intensity ~ emo_id + (1 | participant_id), 
+                                    data = data_valid_physio)
+
+# 2. Tabela ANOVA
+print("--- ANOVA: Diferença entre Emoções ---")
+anova(model_emotion_cat)
+
+# 3. Gráfico de Boxplot (A "Hierarquia Fisiológica")
+# Ordenamos o eixo X pela mediana para mostrar a escada de intensidade
+ggplot(data_valid_physio, aes(x = reorder(emo_id, physio_intensity, FUN = median), 
+                              y = physio_intensity, 
+                              fill = emo_id)) +
+  
+  # Boxplot para mostrar a distribuição
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) + 
+  
+  # Pontos ao fundo (jitter) para mostrar a densidade real dos dados
+  geom_jitter(width = 0.2, alpha = 0.1, color = "black") +
+  
+  # Estética
+  labs(
+    title = "Hierarquia de Intensidade Fisiológica",
+    subtitle = "",
+    y = "Intensidade Fisiológica (PC1 Padronizado)",
+    x = "Categoria Emocional"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none", 
+        axis.text.y = element_text(size = 10, face = "bold")) +
+  coord_flip() # Deita o gráfico para ler melhor os nomes
+```
+
+### Pos-hoc
+
+```{r}
+# ==============================================================================
+# 1. POST-HOC ROBUSTO 
+# ==============================================================================
+
+# Calcular as médias marginais estimadas pelo modelo
+emm_results <- emmeans(model_emotion_cat, ~ emo_id, pbkrtest.limit = 7549)
+
+# A. Tabela de Contrastes (Pares Específicos)
+# O ajuste "tukey" é o método robusto para múltiplas comparações
+contrast_table <- pairs(emm_results, adjust = "sidak")
+
+
+print("--- COMPARAÇÕES PAR A PAR (ROBUSTO - TUKEY) ---")
+# Vamos filtrar apenas os significativos para não poluir a tela, 
+# mas você pode ver todos removendo o filtro.
+print(contrast_table) 
+
+```
+### Análise Hierárquica
+
+```{r}
+cld_results <- cld(emm_results, alpha = 0.05, Letters = letters, adjust = "sidak")
+print("--- GRUPOS ESTATÍSTICOS (LETRAS IGUAIS = SEM DIFERENÇA) ---")
+print(cld_results)
+
+```
+
+```{r LMER}
+# ==============================================================================
+# 5. O MODELO LINEAR MISTO
+# ==============================================================================
+# Agora sim, testamos a interação com N=102 participantes (~7500 observações)
+
+model_interaction_normative <- 
+  lmerTest::lmer(physio_intensity ~ norm_valence * norm_arousal + 
+                   (1 | participant_id), data = data_valid_physio)
+
+print("--- RESULTADO DO MODELO DE INTERAÇÃO (DADOS NORMATIVOS) ---")
+summary(model_interaction_normative)
+
+r2(model_interaction_normative)
+``` 
+
+## Plot para verificar as interações
+
+```{r PLOT}
+# Gerar predições para o gráfico de interação
+# Terms: eixo X = Arousal, Cores = Valence (definimos 3 níveis: Baixa/Negativa, Média, Alta/Positiva)
+pred_interaction <- ggpredict(model_interaction_normative, terms = c("norm_arousal", "norm_valence [2, 5, 8]"))
+
+# Plotar
+plot(pred_interaction) +
+  labs(
+    title = "Interação Valência x Arousal na Intensidade Fisiológica",
+    subtitle = "O efeito do Arousal na fisiologia depende da Valência (N=102)",
+    y = "Intensidade Fisiológica (Fator Geral PC1)",
+    x = "Arousal Normativo do Estímulo",
+    colour = "Valência Normativa"
+  ) +
+  theme_minimal()
+
+``` 
+
+# Existem perfis latentes?
+
+Ainda que o teste tenha indicado 4 perfis, o quarto foi espúrio. 
+
+
+```{r LPA, warning=FALSE}
+# 1. Selecionar variáveis menos redundantes
+# Frequência (n_scr) e Magnitude Máxima (phasic_max) contam histórias complementares
+df_lpa_simple <- data_valid_physio %>%
+  dplyr::select(cda_n_scr, cda_phasic_max) %>%
+  scale() %>%
+  as.data.frame()
+
+# 2. Estimar Perfis (Focando no Modelo 1)
+set.seed(123)
+lpa_result <- df_lpa_simple %>%
+  estimate_profiles(1:4, 
+                    package = "mclust",
+                    models = c(1)) # Apenas variância igual
+
+# 3. Comparar
+print("--- Comparação de Ajuste ---")
+compare_solutions(lpa_result, statistics = c("AIC", "BIC", "Entropy", "BLRT_p"))
+
+# 4. Escolher a Melhor Solução (Vamos assumir 3 ou 4 com base no BIC anterior)
+# Se 4 classes foi o melhor antes, vamos validar com 4 aqui.
+best_lpa <- df_lpa_simple %>%
+  estimate_profiles(4, models = 1) 
+
+# 5. Plotar Perfis
+plot_profiles(best_lpa, add_line = TRUE) 
+
+
+``` 
+### Com 3 perfis
+
+
+1. Baixa Reatividade: As linhas lá embaixo. O corpo quase não reage. 
+
+2. Alta Frequência (Frequent): A linha roxa no seu gráfico anterior. A pessoa tem muitos picos (n_scr alto), mas não necessariamente fortes. É um estado de "alerta constante".
+
+3. Alta Magnitude (Intense): A linha azul que sobe. A pessoa dá "tiros" de adrenalina (phasic_max alto). 
+
+
+```{r}
+# ==============================================================================
+# 4. RODAR O MELHOR MODELO (3 PERFIS - DECISÃO PELA ENTROPIA)
+# ==============================================================================
+set.seed(123)
+lpa_result <- df_lpa_simple %>%
+  estimate_profiles(1:4, 
+                    package = "mclust",
+                    models = c(1)) # Apenas variância igual
+
+# 3. Comparar
+print("--- Comparação de Ajuste ---")
+compare_solutions(lpa_result, statistics = c("AIC", "BIC", "Entropy", "BLRT_p"))
+
+# 4. Escolher a Melhor Solução (Vamos assumir 3 ou 4 com base no BIC anterior)
+# Se 4 classes foi o melhor antes, vamos validar com 4 aqui.
+best_lpa <- df_lpa_simple %>%
+  estimate_profiles(3, models = 1) 
+
+# 5. Plotar Perfis
+plot_profiles(best_lpa, add_line = TRUE) 
+```
+
+### "Esmiuçando"
+
+#### Organização dos dados
+
+```{r}
+# 1. Extrair classificação e probabilidades
+df_classificado <- get_data(best_lpa)
+
+# 2. Juntar com os dados originais (para pegar as emoções)
+# Cuidado: O get_data retorna na mesma ordem do input.
+data_analise_final <- bind_cols(data_valid_physio, Class = df_classificado$Class)
+
+# Renomear os perfis para algo útil (Baseado na sua inspeção visual)
+# Exemplo hipotético (AJUSTE conforme o gráfico que você viu):
+# Class 1 = Baixo? Class 2 = Médio? Class 3 = Alto?
+# Vou deixar genérico, depois você ajusta os labels no factor()
+data_analise_final$Perfil <- factor(data_analise_final$Class, 
+                                    labels = c("Perfil 1", "Perfil 2", "Perfil 3"))
+```
+
+#### Gráfico mais simples
+
+```{r}
+# Preparar dados para o plot (formato longo)
+df_plot_summary <- data_analise_final %>%
+  dplyr::select(Perfil, cda_n_scr, cda_phasic_max) %>%
+  # Padronizar de novo só pra garantir que o gráfico fique na mesma escala visual
+  mutate(across(where(is.numeric), scale)) %>% 
+  pivot_longer(cols = -Perfil, names_to = "Variavel", values_to = "Valor") %>%
+  group_by(Perfil, Variavel) %>%
+  summarise(
+    Media = mean(Valor, na.rm = TRUE),
+    SE = sd(Valor, na.rm = TRUE) / sqrt(n()), # Erro Padrão
+    IC_Low = Media - 1.96 * SE,
+    IC_High = Media + 1.96 * SE,
+    .groups = 'drop'
+  ) %>%
+  # Nomes bonitos para o gráfico
+  mutate(Variavel = recode(Variavel, 
+                           "cda_n_scr" = "Frequência (nSCR)", 
+                           "cda_phasic_max" = "Magnitude Máxima"))
+
+# O GRÁFICO BONITÃO
+ggplot(df_plot_summary, aes(x = Variavel, y = Media, group = Perfil, color = Perfil)) +
+  geom_line(size = 1.2, position = position_dodge(0.1)) +
+  geom_point(size = 3, position = position_dodge(0.1)) +
+  geom_errorbar(aes(ymin = IC_Low, ymax = IC_High), width = 0.1, position = position_dodge(0.1)) +
+  labs(
+    title = "Caracterização dos Perfis Latentes de Reatividade",
+    subtitle = "Médias padronizadas (Z-Score) com Intervalo de Confiança 95%",
+    y = "Escore Z (Padronizado)",
+    x = "Indicador Fisiológico"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "top") +
+  scale_color_brewer(palette = "Dark2")
+```
+
+#### Os perfis diferem entre si?
+
+```{r}
+
+# Tabela de Contingência
+tabela_cruzada <- table(data_analise_final$emo_id, data_analise_final$Perfil)
+
+# Teste Qui-Quadrado
+teste_chi <- chisq.test(tabela_cruzada)
+
+print("--- Associação entre Emoção e Perfil Fisiológico ---")
+print(teste_chi)
+
+# Pós-hoc: Resíduos Ajustados Padronizados
+# Valores > 1.96 indicam que aquela emoção aparece MAIS do que o esperado naquele perfil.
+# Valores < -1.96 indicam que aparece MENOS.
+print("--- Resíduos Ajustados (Onde está a diferença?) ---")
+round(teste_chi$stdres, 2)
+
+# Visualização da Associação (Heatmap dos Resíduos)
+# Isso mostra visualmente o que o Qui-Quadrado achou
+library(corrplot)
+corrplot(teste_chi$stdres, is.cor = FALSE, 
+         title = "Associação Emoção x Perfil (Resíduos)", 
+         mar = c(0,0,2,0), 
+         tl.col = "black", tl.srt = 45)
+
+```
+# Reisenzein
+
+```{r}
+# --- TESTE DE REISENZEIN: DADOS FISIOLÓGICOS ---
+
+# 1. Preparação: Centralizar as escalas Normativas
+# IMPORTANTE: Assumindo escala 1-9 (Neutro = 5). Se for 1-7, mude o 5 para 4.
+
+data_reisenzein_physio <- data_valid_physio %>%
+  mutate(
+    # Centralizar Valência e Arousal (Zero = Neutro)
+    Valence_Centrada = norm_valence - 5,
+    Arousal_Centrado = norm_arousal - 5,
+    
+    # Calcular a Magnitude Vetorial (Distância do ponto zero 5,5)
+    # Hipótese: Quanto maior esse valor, maior a mobilização simpática?
+    Intensidade_Vetorial = sqrt(Valence_Centrada^2 + Arousal_Centrado^2)
+  )
+
+# 2. Teste de Correlação (Spearman)
+# PC1 Fisiológico (Sua Intensidade Extraída) vs. Intensidade Vetorial (Reisenzein)
+cor_physio <- cor.test(data_reisenzein_physio$physio_intensity, 
+                       data_reisenzein_physio$Intensidade_Vetorial, 
+                       method = "spearman")
+
+cat("\n--- CORRELAÇÃO: FISIOLOGIA (PC1) X GEOMETRIA VETORIAL ---\n")
+print(cor_physio)
+
+# 3. Visualização do "U" Fisiológico (V-Shape)
+# Plotamos Valência (Eixo X) vs. Fisiologia (Eixo Y)
+# O tamanho da bolha é o Vetor de Reisenzein.
+library(ggplot2)
+
+ggplot(data_reisenzein_physio, aes(x = Valence_Centrada, y = physio_intensity)) +
+  # Linhas de referência
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray50") +
+  
+  # Pontos (Jitter para não sobrepor, colorido por emoção)
+  geom_jitter(aes(color = emo_id, size = Intensidade_Vetorial), alpha = 0.6, width = 0.2) +
+  
+  # Curva de tendência (Loess) para ver se forma o "U"
+  geom_smooth(method = "loess", color = "black", linetype = "solid") +
+  
+  labs(
+    title = "O Corpo Obedece à Geometria?",
+    subtitle = "Relação entre Valência Normativa e Intensidade Fisiológica (PC1)",
+    x = "Valência Normativa Centrada (Negativo ... Positivo)",
+    y = "Intensidade Fisiológica Real (GSR - PC1)",
+    color = "Emoção",
+    size = "Magnitude Vetorial"
+  ) +
+  theme_minimal() +
+  scale_color_brewer(palette = "Dark2")
+
+# 4. Verificação de Assimetria (Viés de Negatividade)
+# O corpo reage igual para extremos positivos e negativos?
+# Vamos ver a média de intensidade para quem está nos extremos
+extremos <- data_reisenzein_physio %>%
+  mutate(Polo = case_when(
+    Valence_Centrada < -2 ~ "Extremo Negativo",
+    Valence_Centrada > 2 ~ "Extremo Positivo",
+    TRUE ~ "Centro/Neutro"
+  )) %>%
+  group_by(Polo) %>%
+  summarise(
+    Media_Fisiologia = mean(physio_intensity, na.rm=T),
+    N = n()
+  )
+
+cat("\n--- ASSIMETRIA FISIOLÓGICA ---\n")
+print(extremos)
+
+
+
+# --- TESTE DA ESTRUTURA GEOLÓGICA (QUADRÁTICA) ---
+
+# Vamos usar um modelo misto para controlar pelo participante,
+# mas adicionando o termo quadrático da Valência (I(Valence^2))
+
+# Modelo: Intensidade ~ Valência + Valência^2
+# Se o termo quadrático for POSITIVO, temos um "U" (Reisenzein).
+# Se for NEGATIVO, temos um "U Invertido" (Montanha).
+
+modelo_geologico <- lmerTest::lmer(physio_intensity ~ Valence_Centrada + I(Valence_Centrada^2) + 
+                                     (1 | participant_id), 
+                                   data = data_reisenzein_physio)
+
+print("--- TESTE DA CURVATURA (GEOLOGIA) ---")
+summary(modelo_geologico)
+
+# Calcular o R2 para ver se essa geometria explica alguma coisa
+library(performance)
+r2(modelo_geologico)
+```
+
+
+```{r}
+sessionInfo()
+``` 
+
+
