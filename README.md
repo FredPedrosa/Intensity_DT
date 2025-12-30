@@ -56,9 +56,9 @@ Certifique-se de ter instalado:
 
 Cada pasta contém um arquivo RMarkdown (`.Rmd`) que gera o relatório completo da análise, garantindo a reprodutibilidade total dos resultados apresentados.
 
-1.  **Fisiologia:** `scripts/study3_physiology/analysis_GSR.Rmd`
-2.  **Semântica:** `scripts/study1_semantics/analysis_embeddings.Rmd`
-3.  **Música (MEET):** `scripts/study4_music/validation_MEET.Rmd`
+1.  **Fisiologia:** `scripts/study3_physiologyEMO2018_FG.Rmd`
+2.  **Semântica:** `scripts/study1_semantics/CircumplexClean.Rmd`
+3.  **Música (MEET):** `scripts/study4_music/AnaliseMarilia.Rmd`
 
 ---
 
