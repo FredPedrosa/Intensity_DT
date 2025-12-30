@@ -1,0 +1,1369 @@
+---
+title: "THE HIERARCHICAL STRUCTURE OF AFFECT"
+author: "Frederico Pedrosa"
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    latex_engine: xelatex  
+    highlight: tango
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: hide
+    theme: cosmo
+    highlight: tango
+header-includes:
+  - \usepackage{placeins} 
+---
+
+
+# Preparação do ambiente
+
+```{r}
+if (!require("pacman")) {
+  install.packages("pacman")
+}
+
+# Passo 2: Usar a função p_load() do pacman para instalar (se necessário) e carregar todos os pacotes.
+# Você só precisa listar os nomes dos pacotes, sem aspas.
+pacman::p_load(
+  # Leitura e Manipulação de Dados
+  readr, readxl, dplyr, tidyr, janitor, stringi, stringr, tidytext,
+
+  # Análise Fatorial e Psicometria
+  psych, EFA.dimensions, GPArotation, MVN,
+
+  # Modelagem de Equações Estruturais
+  lavaan, semTools, seminr, cSEM,
+
+  # Análise de Redes
+  EGAnet,
+
+  # Visualização de Dados
+  ggplot2, patchwork, ggrepel, GGally, semPlot, plotly
+)
+
+# Mensagem de confirmação
+cat("Todos os pacotes necessários foram verificados e carregados com sucesso.")
+
+```
+
+# Estimativas com embeddings
+
+## Carregar embedings e transpor a matriz para 768 x 45
+
+```{r, data embeddings}
+
+data <- read_csv("embeddings_circumplex.csv")
+
+cat("Dimensões do arquivo original (Linhas x Colunas):", dim(data), "\n")
+print("Primeiras linhas do arquivo original:")
+print(head(data))
+
+# --- Passo 3: Preparar o DataFrame para Análise ---
+# Seleciona todas as colunas, EXCETO a primeira coluna 'palavra'
+# A função select() do dplyr é mais explícita e segura para isso
+embeddings_matrix <- data %>%
+  select(-palavra)
+
+print("\nÚltimas linhas da matriz de embeddings pronta para análise:")
+print(tail(embeddings_matrix))
+
+# --- Passo 1: Transpor a Matriz de Embeddings ---
+transposed_matrix <- t(embeddings_matrix)
+
+
+# --- Passo 2: Atribuir os Nomes das Palavras como Nomes de Coluna ---
+colnames(transposed_matrix) <- data$palavra
+
+english_words <- c(
+  "Fuck", "Great", "Longing", "Shit", "Good", "Rest", "Delight", "Sad",
+  "Alone", "Sadness", "Wonder", "Crazy", "Dancing", "Charming", "Chic",
+  "Beautiful", "Peace", "Happy", "Vibe", "Wonderful", "Cry", "Crying",
+  "Gentle", "Relax", "Tranquility", "Loves", "Loved", "Love", "Like",
+  "Heart", "Remember", "Grace", "Triggers", "Think", "Calm", "Top", "Perfect",
+  "Bad", "Liked", "Trash", "Addicted", "Banger", "Hell", "Hit", "Memories"
+)
+data$palavra <- english_words
+colnames(transposed_matrix) <- data$palavra
+
+
+```
+
+## Verificar se a matriz é fatorável
+
+
+
+```{r}
+cat("--- PASSO 1: Teste de Esfericidade de Bartlett ---\n")
+cor_matrix <- cor(transposed_matrix, use = "pairwise.complete.obs")
+bartlett_test <- cortest.bartlett(cor_matrix, n = nrow(transposed_matrix))
+print(bartlett_test)
+
+
+cat("\n\n--- PASSO 2: Medida de Adequação da Amostra (KMO) ---\n")
+kmo_test <- KMO(cor_matrix)
+print(kmo_test)
+
+```
+## Análise Paralela de Horn para Componentes Principais e Análise Fatorial
+
+```{r}
+# --- STEP 1: Run Horn's Parallel Analysis ---
+# The 'main' argument is translated to set the plot title in English.
+parallel_analysis <- fa.parallel(
+  transposed_matrix,
+  fa = "both",      # "both" runs the analysis for PCA and Factor Analysis (EFA)
+  n.iter = 100, 
+  show.legend = TRUE,
+  main = "Horn's Parallel Analysis" # Title translated
+)
+
+# The output message is already in English and is a standard result from the 'psych' package:
+# "Parallel analysis suggests that the number of factors = 6 and the number of components = 3"
+# This confirms the findings discussed in the text.
+
+
+# --- STEP 2: Prepare data frames for ggplot with English variable names ---
+
+# Data frame for the PCA plot
+df_plot_pca <- data.frame(
+  Number = 1:length(parallel_analysis$pc.values),
+  Actual_Eigenvalue = parallel_analysis$pc.values,
+  Simulated_Eigenvalue = parallel_analysis$pc.sim
+)
+
+# Data frame for the EFA (Exploratory Factor Analysis) plot
+df_plot_efa <- data.frame(
+  Number = 1:length(parallel_analysis$fa.values),
+  Actual_Eigenvalue = parallel_analysis$fa.values,
+  Simulated_Eigenvalue = parallel_analysis$fa.sim
+)
+
+
+# --- STEP 3: Create the PCA plot with English labels ---
+plot_pca <- ggplot(df_plot_pca, aes(x = Number)) +
+  geom_line(aes(y = Actual_Eigenvalue, color = "Actual Data (PCA)"), linewidth = 0.7) +
+  geom_point(aes(y = Actual_Eigenvalue, color = "Actual Data (PCA)"), shape = 17, size = 3) +
+  geom_line(aes(y = Simulated_Eigenvalue, color = "Simulated Data (PCA)"), linetype = "dashed", linewidth = 0.7) +
+  
+  geom_hline(yintercept = 1, linetype = "dotted", color = "black") +
+  
+  scale_color_manual(
+    name = "Analysis", 
+    values = c("Actual Data (PCA)" = "blue", "Simulated Data (PCA)" = "red")
+  ) +
+  labs(
+    title = "Parallel Analysis (Principal Components)",
+    x = "Component Number",
+    y = "Eigenvalue"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top", plot.title = element_text(hjust = 0.5, face = "bold")) +
+  scale_x_continuous(breaks = seq(0, 45, by = 5))
+
+
+# --- STEP 4: Create the EFA plot with English labels ---
+plot_efa <- ggplot(df_plot_efa, aes(x = Number)) +
+  geom_line(aes(y = Actual_Eigenvalue, color = "Actual Data (EFA)"), linewidth = 0.7) +
+  geom_point(aes(y = Actual_Eigenvalue, color = "Actual Data (EFA)"), shape = 17, size = 3) +
+  geom_line(aes(y = Simulated_Eigenvalue, color = "Simulated Data (EFA)"), linetype = "dashed", linewidth = 0.7) +
+  
+  geom_hline(yintercept = 1, linetype = "dotted", color = "black") +
+
+  scale_color_manual(
+    name = "Analysis", 
+    values = c("Actual Data (EFA)" = "darkgreen", "Simulated Data (EFA)" = "purple")
+  ) +
+  labs(
+    title = "Parallel Analysis (Factor Analysis)",
+    x = "Factor Number",
+    y = "Eigenvalue"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top", plot.title = element_text(hjust = 0.5, face = "bold")) +
+  scale_x_continuous(breaks = seq(0, 45, by = 5))
+
+
+# --- STEP 5: Combine both plots side-by-side using the 'patchwork' package ---
+combined_plot <- plot_pca + plot_efa
+print(combined_plot) 
+
+# Agora, salve o gráfico em um arquivo
+#ggsave("parallel_analysis.png",width = 12, height = 8, dpi = 300)
+
+```
+## PCA - identificação do fator geral
+
+1a dimenssão em que todas as palavras carregam de forma positiva
+
+```{r}
+cat("\n--- Rodando PCA para extrair 3 componentes ---\n")
+pca_results_psych <- principal(
+  r = transposed_matrix,
+  nfactors = 3,
+  rotate = "none" # Sem rotação para ver a estrutura bruta
+)
+print(pca_results_psych$loadings, cutoff = 0.3, sort = TRUE)
+pca_results_psych$fit.off
+pc_scores_df <- as.data.frame(pca_results_psych$scores)
+```
+### A extração do fator geral faz com que vejamos o modelo circumplexo
+
+```{r}
+loadings_df <- as.data.frame(unclass(pca_results_psych$loadings))
+loadings_df$palavra <- rownames(loadings_df)
+
+
+grafico_pca_intensidade_final <- ggplot(
+  data = loadings_df, 
+  aes(x = PC3, y = PC2, label = palavra, size = PC1) 
+) +
+  
+  # Linhas de referência dos quadrantes
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray50") +
+  
+  # Camada de texto com repulsão
+  geom_text_repel(
+    fontface = "bold",
+    color = "black",
+    bg.color = "white",
+    bg.r = 0.1,
+    segment.color = "transparent",
+    max.overlaps = Inf
+  ) +
+  
+  # Customização da escala de tamanho
+  scale_size_continuous(
+    range = c(2, 6), # Mantive seu range preferido
+    name = "Intensity (PC1)"
+  ) +
+  
+  # ### ALTERAÇÃO 1: Horizontalizar o Gráfico ###
+  # A linha 'coord_fixed()' foi REMOVIDA.
+  # Agora o gráfico irá se expandir para preencher o espaço disponível.
+  
+  # ### ALTERAÇÃO 2: Simplificar os Títulos dos Eixos ###
+  labs(
+    title = "",
+    subtitle = "",
+    x = "Arousal (PC3)", # Texto da variância removido
+    y = "Inverted Valence (PC2)" # Texto da variância removido
+  ) +
+  
+  # Tema visual limpo
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.major = element_line(color = "gray90"),
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 18),
+    plot.subtitle = element_text(hjust = 0.5, size = 11),
+    legend.position = "right",
+    
+    # ### ALTERAÇÃO 3: Diminuir a Letra dos Títulos dos Eixos ###
+    # Adicionamos 'axis.title' para customizar o texto dos eixos X e Y.
+    # O tamanho base é 14, então 12 é um pouco menor.
+    axis.title = element_text(size = 12)
+  )
+
+# Exibir o gráfico final
+print(grafico_pca_intensidade_final)
+ggsave("Figure 2.png",width = 12, height = 8, dpi = 300, bg = "white")
+
+```
+
+
+## PCA com Varimax para tentar idenficar melhor as palavras que representam os PCs
+
+```{r}
+cat("\n--- Rodando PCA para extrair 3 componentes ---\n")
+pca_results_psych <- principal(
+  r = transposed_matrix,
+  nfactors = 3,
+  rotate = "none" 
+)
+#print(pca_results_psych$loadings, cutoff = 0.3, sort = TRUE)
+pca_results_psych$fit.off
+
+
+# Supondo que 'pca_results_varimax' seja o seu objeto da PCA com rotação Varimax
+# Se não o tiver, rode novamente:
+pca_results_varimax <- principal(
+  r = transposed_matrix, # Sua matriz de correlação dos embeddings
+  nfactors = 3,
+  rotate = "varimax"
+)
+
+# Extrair as cargas e converter para um dataframe
+loadings_df_unique <- as.data.frame(unclass(pca_results_varimax$loadings))
+
+loadings_df_unique <- loadings_df_unique %>%
+  mutate(palavra = rownames(.)) %>%
+  # Transforma para o formato longo (igual antes)
+  pivot_longer(
+    cols = c("RC1", "RC2", "RC3"), 
+    names_to = "Componente", 
+    values_to = "Carga"
+  ) %>%
+  # Agrupa por palavra
+  group_by(palavra) %>%
+  # AQUI ESTÁ A MUDANÇA: Filtra para manter APENAS a linha com a maior carga absoluta para cada palavra
+  filter(abs(Carga) == max(abs(Carga))) %>%
+  ungroup() %>%
+  # Opcional: Ainda podemos filtrar cargas muito baixas se quisermos limpar mais o gráfico
+  filter(abs(Carga) > 0.4) %>% # Você pode ajustar ou remover esta linha
+  # Ordena as palavras dentro de cada componente pela carga (igual antes)
+  group_by(Componente) %>%
+  mutate(palavra = reorder_within(palavra, Carga, Componente))
+
+# --- O CÓDIGO DO GGPLOT CONTINUA O MESMO ---
+
+# Criar o gráfico usando o novo dataframe 'loadings_df_unique'
+loadings_plot_unique <- ggplot(loadings_df_unique, aes(x = Carga, y = palavra, fill = Componente)) +
+  geom_col() +
+  facet_wrap(~ Componente, scales = "free_y") +
+  scale_y_reordered() +
+  
+  # Estética e Rótulos
+  labs(
+    title = "",
+    subtitle = "",
+    x = "Component Loadgin",
+    y = "Affevtive Descriptor "
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "none",
+    strip.text = element_text(face = "bold", size = 14),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.text.y = element_text(size = 9)
+  )
+
+# Exibir o novo gráfico
+print(loadings_plot_unique)
+
+
+# Para salvar em alta qualidade:
+#ggsave("Figure 3.png", plot = loadings_plot_unique, bg = "white", width = 12, 
+#       height = 8, dpi = 300)
+
+```
+## Formativo vs Reflexivo
+
+Por PLS-SEm vamos tentar ver se o fator geral neste modelo é formativo ou reflexivo
+
+```{r}
+# --- PART 1: First-Order Model (to extract scores) ---
+
+# Convert the transposed matrix to a data frame and clean column names
+# (Important for seminr, which works best with clean syntactical names)
+data_df <- as.data.frame(transposed_matrix)
+clean_data <- clean_names(data_df)
+
+# Define the first-order measurement model
+# The item names here MUST be the English versions you created earlier.
+first_order_mm <- constructs(
+  composite("HighValence", 
+            c("remember", "chic", "charming", "dancing", "wonder", "crazy", 
+              "delight", "beautiful", "like", "wonderful", "liked", "love", 
+              "top", "vibe"), 
+            weights = mode_A),
+  
+  composite("LowValence", 
+            c("addicted", "shit", "trash", "fuck", "bad", "banger", 
+              "hell", "memories", "hit"), 
+            weights = mode_A)
+)
+
+# Define the first-order structural model (relationship between constructs)
+first_order_sm <- relationships(
+  paths(from = "HighValence", to = "LowValence")
+)
+
+# Estimate the first-order PLS model
+first_order_pls_model <- estimate_pls(
+  data = clean_data,
+  measurement_model = first_order_mm,
+  structural_model = first_order_sm
+)
+
+# Extract construct scores and combine them with the original data
+construct_scores <- first_order_pls_model$construct_scores
+data_with_scores <- cbind(as.data.frame(clean_data), construct_scores)
+
+```
+
+### Segunda ordem formativa
+
+Para validar um construto formativo, ele precisa APONTAR para algo.
+Como não temos uma variável externa, podemos usar um "construto-âncora"
+Vamos criar um construto-âncora reflexivo com alguns itens do próprio RC1
+Apenas para que o FatorGeral tenha um "alvo" e seus pesos possam ser estimados.
+
+```{r}
+# --- PART 2: Second-Order Formative Model ---
+
+# Define the full measurement model, including the second-order construct
+full_mm_formative <- constructs(
+  # First-order constructs are now defined by their score (single indicator)
+  composite("HighValence", "HighValence"),
+  composite("LowValence", "LowValence"),
+  
+  # The second-order FORMATIVE construct
+  # It is formed by the scores of the first-order constructs
+  composite("GeneralFactor", 
+            c("HighValence", "LowValence"), 
+            weights = mode_B), # mode_B is used for formative constructs
+  
+  # Anchor construct (outcome) to validate the GeneralFactor
+  composite("Anchor", c("peace", "calm", "sadness", "love"), weights = mode_A)
+)
+
+# Define the final structural model
+final_sm <- relationships(
+  paths(from = "GeneralFactor", to = "Anchor")
+)
+
+# Estimate the final formative PLS model
+final_pls_formative <- estimate_pls(
+  data = data_with_scores, # Use the data that includes the calculated scores
+  measurement_model = full_mm_formative,
+  structural_model = final_sm
+)
+
+# Analyze the results
+summary_final_formative <- summary(final_pls_formative)
+print(summary_final_formative$reliability)
+print(summary_final_formative$validity$vif_items)
+
+# Run bootstrapping to get p-values for the formative weights
+boot_results_formative <- bootstrap_model(final_pls_formative, nboot = 5000)
+summary_boot_formative <- summary(boot_results_formative)
+
+# Check the p-values for the weights in:
+print(summary_boot_formative$bootstrapped_weights)
+plot(final_pls_formative)
+
+# Extract the scores from the formative General Factor
+scores_pls_formative <- as.data.frame(final_pls_formative$construct_scores)
+general_factor_formative_scores <- scores_pls_formative$GeneralFactor
+
+```
+
+
+```{r}
+if (!require("DiagrammeR")) install.packages("DiagrammeR")
+if (!require("magick")) install.packages("magick")
+
+# Este pacote ajuda o DiagrammeR a encontrar o GraphViz
+if (!require("DiagrammeRsvg")) install.packages("DiagrammeRsvg")
+
+plot_formative <- plot(final_pls_formative, title = "")
+
+temp_svg_file_formative <- tempfile(fileext = ".svg")
+export_svg(plot_formative) %>%
+  charToRaw() %>%
+  writeBin(temp_svg_file_formative)
+
+image_read_svg(temp_svg_file_formative) %>%
+  image_write(
+    path = "Figure4.png",
+    format = "png",
+    density = 300  
+  )
+```
+
+### Segunda ordem reflexiva
+
+
+```{r}
+full_mm_reflective <- constructs(
+  # First-order constructs
+  composite("HighValence", "HighValence"),
+  composite("LowValence", "LowValence"),
+  
+  # The second-order REFLECTIVE construct
+  # The indicators (HighValence, LowValence) are now seen as reflections of the GeneralFactor
+  composite("GeneralFactor", 
+            c("HighValence", "LowValence"), 
+            weights = mode_A), # mode_A is used for reflective constructs
+  
+  # Anchor construct remains the same
+  composite("Anchor", c("peace", "calm", "sadness", "love"), weights = mode_A)
+)
+
+# The structural model remains the same
+final_sm_reflective <- relationships(
+  paths(from = "GeneralFactor", to = "Anchor")
+)
+
+# Estimate the final reflective PLS model
+final_pls_reflective <- estimate_pls(
+  data = data_with_scores, # Use the data with the pre-calculated scores
+  measurement_model = full_mm_reflective,
+  structural_model = final_sm_reflective
+)
+
+# Analyze the results
+summary_final_reflective <- summary(final_pls_reflective)
+print(summary_final_reflective$reliability)
+
+# Run bootstrapping to get p-values for paths and loadings
+boot_results_reflective <- bootstrap_model(final_pls_reflective, nboot = 5000)
+summary_boot_reflective <- summary(boot_results_reflective)
+
+# Check the p-values for the loadings in:
+print(summary_boot_reflective$bootstrapped_loadings)
+plot(final_pls_reflective)
+
+# Extract the scores from the reflective General Factor
+scores_pls_reflective <- as.data.frame(final_pls_reflective$construct_scores)
+general_factor_reflective_scores <- scores_pls_reflective$GeneralFactor
+```
+
+
+
+```{r}
+plot_reflexive <- plot(final_pls_reflective)
+
+# Salve o gráfico em um arquivo SVG temporário
+temp_svg_file2 <- tempfile(fileext = ".svg")
+export_svg(plot_reflexive) %>%
+  charToRaw() %>%
+  writeBin(temp_svg_file2)
+
+# Leia o arquivo SVG com o 'magick' e salve-o como PNG
+# O magick é muito mais robusto para a conversão de imagens
+image_read_svg(temp_svg_file2) %>%
+  image_write("Figure5.png")
+
+```
+
+### Reflexivo pelo lavaan
+
+O modelo não ajusta mesmo com excelente confiabilidade
+
+```{r}
+modelo_semantico <- '
+  AltaV    =~ remember + chic + charming + dancing + wonder + crazy + 
+                delight + beautiful + like + wonderful + liked + love + top + vibe
+  BaixaV   =~ addicted + shit + trash + fuck + bad + hit + hell + memories + banger
+
+'
+
+fit_semantico <- cfa(modelo_semantico, data = clean_data, estimator = "MLR", orthogonal = F)
+fitmeasures(fit_semantico, c("chisq", "df", "pvalue", "cfi", "rmsea", 
+                             "rmsea.ci.lower", "rmsea.ci.upper"))
+
+summary(fit_semantico, fit.measures = TRUE, standardized = TRUE)
+
+semTools::compRelSEM(fit_semantico)
+
+```
+
+### Correlações estudo 1
+
+```{r}
+
+## FATOR GERAL
+matriz <- cbind(scores_pls_reflective[1], scores_pls_formative[1], pca_results_psych$scores[,1])
+colnames(matriz) <- c("FG_Reflexivo", "FG_Formativo", "PC1")
+#mvn(matriz, univariateTest = "SW")
+corCi(matriz,method = "spearman", plot = F)
+
+#FATORES ESPECÍFICOS
+especificos <- as.data.frame(construct_scores)
+matriz_especificos <- cbind(especificos, pc_scores_df[2:3])
+#mvn(matriz_especificos, univariateTest = "SW")
+corCi(matriz_especificos,method = "spearman", plot = F)
+
+
+```
+
+
+```{r}
+pc_scores_df <- as.data.frame(pca_results_psych$scores)
+
+# Agora, crie o data frame para a análise de convergência com os nomes corretos
+convergence_study1_df <- data.frame(
+  PC1 = pc_scores_df$PC1,
+  PC2 = pc_scores_df$PC2,
+  PC3 = pc_scores_df$PC3,
+  GF_Formative = general_factor_formative_scores, # <-- CORREÇÃO AQUI
+  HighValence = especificos$HighValence,
+  LowValence = especificos$LowValence
+)
+
+
+# Usando ggpairs para uma visualização completa e robusta
+cor_plot <- GGally::ggpairs(
+  convergence_study1_df,
+  title = "",
+  upper = list(continuous = wrap("cor", method = "spearman", size = 4)), # Mostra a correlação
+  lower = list(continuous = wrap("points", alpha = 0.3)) # Mostra o scatterplot
+)
+print(cor_plot)
+#ggsave("Figure6.png", plot = cor_plot, bg = "white", width = 10, 
+#       height = 6, dpi = 300)
+```
+
+
+# Estimativas com PANAS
+
+```{r}
+load("data.RData")
+panas_data <- as.data.frame(data[97:116])
+str(panas_data)
+```
+
+## Fatorabilidade
+
+```{r}
+cat("--- Teste de Esfericidade de Bartlett (Correto) ---\n")
+poly <- polychoric(panas_data)
+cor_poly <- poly$rho
+bartlett_results_correto <- cortest.bartlett(cor_poly)
+print(bartlett_results_correto)
+
+cat("\n--- Medida de Adequação da Amostra (KMO) ---\n")
+kmo_results_correto <- KMO(cor_poly)
+print(kmo_results_correto)
+
+```
+## Análise Paralela de Horn
+
+```{r}
+parallel_analysis_results <- fa.parallel(
+  panas_data,
+  fa = "both",  
+  n.iter = 100, 
+  show.legend = TRUE,
+  cor="poly",
+  main = "Análise Paralela de Horn"
+)
+
+```
+
+### Plot da AP
+
+```{r}
+# --- STEP 1: Prepare data frames for plotting with English variable names ---
+
+# Data frame for the PCA plot
+df_plot_pca <- data.frame(
+  Number = 1:length(parallel_analysis_results$pc.values),
+  Actual_Eigenvalue = parallel_analysis_results$pc.values,
+  Simulated_Eigenvalue = parallel_analysis_results$pc.sim
+)
+
+# Data frame for the EFA (Exploratory Factor Analysis) plot
+df_plot_efa <- data.frame(
+  Number = 1:length(parallel_analysis_results$fa.values),
+  Actual_Eigenvalue = parallel_analysis_results$fa.values,
+  Simulated_Eigenvalue = parallel_analysis_results$fa.sim
+)
+
+
+# --- STEP 2: Create the PCA plot with English labels ---
+plot_pca <- ggplot(df_plot_pca, aes(x = Number)) +
+  geom_line(aes(y = Actual_Eigenvalue, color = "Actual Data (PCA)"), linewidth = 0.7) +
+  geom_point(aes(y = Actual_Eigenvalue, color = "Actual Data (PCA)"), shape = 17, size = 3) +
+  geom_line(aes(y = Simulated_Eigenvalue, color = "Simulated Data (PCA)"), linetype = "dashed", linewidth = 0.7) +
+  
+  geom_hline(yintercept = 1, linetype = "dotted", color = "black") +
+  
+  scale_color_manual(
+    name = "Analysis", # Legend title translated
+    values = c("Actual Data (PCA)" = "blue", "Simulated Data (PCA)" = "red") # Legend labels translated
+  ) +
+  labs(
+    title = "Parallel Analysis (Principal Components)", # Title translated
+    x = "Component Number", # X-axis label translated
+    y = "Eigenvalue" # Y-axis label translated
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top", plot.title = element_text(hjust = 0.5, face = "bold")) +
+  scale_x_continuous(breaks = seq(0, 45, by = 5))
+
+
+# --- STEP 3: Create the EFA plot with English labels ---
+plot_efa <- ggplot(df_plot_efa, aes(x = Number)) +
+  geom_line(aes(y = Actual_Eigenvalue, color = "Actual Data (EFA)"), linewidth = 0.7) +
+  geom_point(aes(y = Actual_Eigenvalue, color = "Actual Data (EFA)"), shape = 17, size = 3) +
+  geom_line(aes(y = Simulated_Eigenvalue, color = "Simulated Data (EFA)"), linetype = "dashed", linewidth = 0.7) +
+  
+  geom_hline(yintercept = 1, linetype = "dotted", color = "black") +
+  
+  scale_color_manual(
+    name = "Analysis", # Legend title translated
+    values = c("Actual Data (EFA)" = "darkgreen", "Simulated Data (EFA)" = "purple") # Legend labels translated
+  ) +
+  labs(
+    title = "Parallel Analysis (Factor Analysis)", # Title translated
+    x = "Factor Number", # X-axis label translated
+    y = "Eigenvalue" # Y-axis label translated
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top", plot.title = element_text(hjust = 0.5, face = "bold")) +
+  scale_x_continuous(breaks = seq(0, 45, by = 5))
+
+
+# --- STEP 4: Combine the two plots side-by-side ---
+# Assign the combined plot to an object
+combined_plot <- plot_pca + plot_efa
+
+# Display the combined plot
+print(combined_plot)
+ggsave("Figure7.png", plot = combined_plot, width = 12, height = 5, dpi = 300,
+       bg = "white")
+```
+
+### PCA do PANAS
+
+O primeiro componente parece ter o eixo valência também enquanto o segundo parece ter o Intensidade/Saliência, com todas as palavras carregando positivamente
+
+```{r}
+library(dplyr)
+
+# Baseado nos itens padrão do PANAS (Watson et al., 1988)
+panas_english_names <- c(
+  "PN1ativo"    = "Active",
+  "PN2envergo"  = "Ashamed",
+  "PN3atento"   = "Attentive",
+  "PN4aflit"    = "Distressed",
+  "PN5determ"   = "Determined",
+  "PN6culpado"  = "Guilty",
+  "PN7empol"    = "Excited",
+  "PN8irrit"    = "Irritable",
+  "PN9interes"  = "Interested",
+  "PN10medo"    = "Scared",
+  "PN11orgul"   = "Proud",
+  "PN12hostil"  = "Hostile",
+  "PN13alerta"  = "Alert",
+  "PN14inquie"  = "Jittery",
+  "PN15entusia" = "Enthusiastic",
+  "PN16nervo"   = "Nervous",
+  "PN17forte"   = "Strong",
+  "PN18apavo"   = "Afraid",
+  "PN19inspi"   = "Inspired",
+  "PN20chate"   = "Upset"
+)
+
+panas_data <- panas_data %>%
+  rename(any_of(setNames(names(panas_english_names), panas_english_names)))
+
+# --- OU, UMA FORMA MAIS DIRETA SE OS NOMES JÁ ESTIVEREM NA ORDEM ---
+# Se você preferir atribuir diretamente (mas precisa garantir que as colunas existem):
+# names(panas_data) <- c("Active", "Ashamed", "Attentive", "Distressed", "Determined", 
+#                        "Guilty", "Excited", "Irritable", "Interested", "Scared", 
+#                        "Proud", "Hostile", "Alert", "Jittery", "Enthusiastic", 
+#                        "Nervous", "Strong", "Afraid", "Inspired", "Upset")
+
+
+# 3. Rodar a PCA novamente com os nomes em Inglês
+pca_results_psych <- principal(
+  r = panas_data,
+  nfactors = 2,
+  rotate = "none" 
+)
+
+# 4. Imprimir os loadings (agora em inglês)
+print(pca_results_psych$loadings, cutoff = 0.30, sort = TRUE)
+
+
+
+
+
+
+
+
+cat("\n--- Rodando PCA para extrair 2 componentes ---\n")
+
+pca_results_psych <- principal(
+  r = panas_data,
+  nfactors = 2,
+  rotate = "none" 
+)
+
+print(pca_results_psych$loadings, cutoff = 0.30, sort = TRUE)
+pca_results_psych$fit.off
+```
+
+### Plot
+
+```{r}
+
+# Prepara o dataframe para o plot
+loadings_df <- as.data.frame(unclass(pca_results_psych$loadings))
+loadings_df$palavra <- rownames(loadings_df)
+
+# --- INÍCIO DO CÓDIGO DO GRÁFICO MODIFICADO ---
+
+grafico_panas_2D_simples <- ggplot(
+  data = loadings_df, 
+  # MUDANÇA 1: Removemos 'size' do mapeamento estético (aes).
+  aes(x = PC1, y = PC2, label = palavra) 
+) +
+  
+  # Linhas de referência dos quadrantes (centro em 0,0)
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray50") +
+  
+  # Camada de texto com repulsão.
+  # MUDANÇA 2: Definimos um tamanho FIXO para todas as palavras.
+  geom_text_repel(
+    fontface = "bold",
+    color = "black",
+    bg.color = "white",
+    bg.r = 0.1,
+    segment.color = "transparent",
+    max.overlaps = Inf,
+    size = 4  # Todas as palavras terão este tamanho de fonte.
+  ) +
+  
+  # MUDANÇA 3: A linha 'scale_size_continuous(...)' foi completamente REMOVIDA.
+  # Ela não é mais necessária e causaria um erro.
+  
+  # MUDANÇA 4: Títulos e eixos atualizados para refletir a nova visualização.
+  labs(
+    title = "",
+    subtitle = "",
+    x = "Valence (PC1)",
+    y = "Intensity (PC2)"
+  ) +
+  
+  # Tema visual limpo
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.major = element_line(color = "gray90"),
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 18),
+    plot.subtitle = element_text(hjust = 0.5, size = 11),
+    # A legenda desaparece automaticamente porque não há mais estéticas para legendar.
+    legend.position = "none" 
+  )
+
+# Exibir o gráfico final
+print(grafico_panas_2D_simples)
+#ggsave("mapaPANAS.png", plot = grafico_panas_2D_simples, 
+#       width = 12, height = 6, units = "in", dpi = 300,  bg = "white")
+```
+
+
+### Com rotação para extrair os componentes
+
+```{r}
+
+cat("\n--- Rodando PCA para extrair 2 componentes ---\n")
+
+pca_results_psych <- principal(
+  r = panas_data,
+  nfactors = 2,
+  rotate = "varimax" # Sem rotação para ver a estrutura bruta
+)
+
+pca_results_psych$fit.off
+
+# Extrair as cargas e converter para um dataframe
+loadings_df_unique <- as.data.frame(unclass(pca_results_psych$loadings))
+
+loadings_df_unique <- loadings_df_unique %>%
+  mutate(palavra = rownames(.)) %>%
+  # Transforma para o formato longo (igual antes)
+  pivot_longer(
+    cols = c("RC1", "RC2"), 
+    names_to = "Componente", 
+    values_to = "Carga"
+  ) %>%
+  # Agrupa por palavra
+  group_by(palavra) %>%
+  # AQUI ESTÁ A MUDANÇA: Filtra para manter APENAS a linha com a maior carga absoluta para cada palavra
+  filter(abs(Carga) == max(abs(Carga))) %>%
+  ungroup() %>%
+  # Opcional: Ainda podemos filtrar cargas muito baixas se quisermos limpar mais o gráfico
+  filter(abs(Carga) > 0.4) %>% # Você pode ajustar ou remover esta linha
+  # Ordena as palavras dentro de cada componente pela carga (igual antes)
+  group_by(Componente) %>%
+  mutate(palavra = reorder_within(palavra, Carga, Componente))
+
+# --- O CÓDIGO DO GGPLOT CONTINUA O MESMO ---
+
+# Criar o gráfico usando o novo dataframe 'loadings_df_unique'
+loadings_plot_unique <- ggplot(loadings_df_unique, aes(x = Carga, y = palavra, fill = Componente)) +
+  geom_col() +
+  facet_wrap(~ Componente, scales = "free_y") +
+  scale_y_reordered() +
+  
+  # Estética e Rótulos
+  labs(
+    title = "Agrupamento dos Descritores Afetivos por Componente Principal (Varimax)",
+    subtitle = "Cada descritor é atribuído ao componente de maior carga fatorial",
+    x = "Carga no Componente",
+    y = "Descritor Afetivo"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "none",
+    strip.text = element_text(face = "bold", size = 14),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.text.y = element_text(size = 9)
+  )
+
+# Exibir o novo gráfico
+print(loadings_plot_unique)
+
+
+# Para salvar em alta qualidade:
+# ggsave("cargas_fatoriais_varimax.png", plot = loadings_plot, width = 10, height = 8, dpi = 300)
+
+
+```
+
+## Formativo vs reflexivo - PANAS
+
+```{r}
+
+# 1. Definir o modelo de mensuração de primeira ordem (AP e AN)
+# --- PART 1: First-Order PLS Model for PANAS ---
+
+# 1. Define the first-order measurement model using the new English item names
+first_order_mm_panas <- constructs(
+  composite("PA", c("Active", "Attentive", "Determined", "Excited", 
+                    "Interested", "Proud", "Alert", "Enthusiastic", 
+                    "Strong", "Inspired"), 
+            weights = mode_A),
+  
+  composite("NA", c("Ashamed", "Distressed", "Guilty", "Irritable", 
+                    "Scared", "Hostile", "Jittery", "Nervous", 
+                    "Afraid", "Upset"), 
+            weights = mode_A)
+)
+
+# 2. Define the structural model (relationship between PA and NA)
+first_order_sm_panas <- relationships(
+  paths(from = "PA", to = "NA")
+)
+
+# 3. Estimate the model to extract the scores
+first_order_pls_panas <- estimate_pls(
+  data = panas_data, # Your dataframe with English column names
+  measurement_model = first_order_mm_panas,
+  structural_model = first_order_sm_panas
+)
+
+# Check the summary to ensure it ran correctly
+summary(first_order_pls_panas)
+
+# 4. Extract scores and create a new dataframe for the second-order models
+panas_scores <- first_order_pls_panas$construct_scores
+panas_with_scores <- as.data.frame(cbind(panas_data, panas_scores))
+```
+
+### Formative - PANAS
+
+```{r}
+# --- PART 2: Second-Order Formative Model for PANAS ---
+
+# 1. Define the full measurement model
+# PA and NA are now single-item indicators (the scores we just calculated)
+second_order_mm_formative <- constructs(
+  composite("PA", "PA"), # Single indicator
+  composite("NA", "NA"), # Single indicator
+  
+  # Define the anchor construct using the correct English item names
+  composite("Activation_Anchor", c("Excited", "Enthusiastic", "Irritable", "Nervous"), weights = mode_A),
+  
+  # Define the second-order FORMATIVE construct
+  composite("G_Factor_Formative", c("PA", "NA"), weights = mode_B)
+)
+
+# 2. Define the structural model
+second_order_sm_panas <- relationships(
+  paths(from = "G_Factor_Formative", to = "Activation_Anchor")
+)
+
+# 3. Estimate the final formative model
+pls_panas_formative <- estimate_pls(
+  data = panas_with_scores,
+  measurement_model = second_order_mm_formative,
+  structural_model = second_order_sm_panas
+)
+
+# 4. Analyze results (VIF for formative constructs)
+summary_panas_formative <- summary(pls_panas_formative)
+print(summary_panas_formative$validity$vif_items)
+
+# 5. Bootstrap for weight significance
+boot_panas_formative <- bootstrap_model(pls_panas_formative, nboot = 5000)
+summary(boot_panas_formative)$bootstrapped_weights
+
+```
+
+### Reflective - PANAS
+
+```{r}
+# --- PART 3: Second-Order Reflective Model for PANAS ---
+
+# 1. Define the full measurement model
+# **CORRECTION**: The General Factor is now defined as REFLECTIVE (mode_A)
+second_order_mm_reflective <- constructs(
+  composite("PA", "PA"), # Single indicator
+  composite("NA", "NA"), # Single indicator
+  
+  # The anchor construct remains the same
+  composite("Activation_Anchor", c("Excited", "Enthusiastic", "Irritable", "Nervous"), weights = mode_A),
+  
+  # Define the second-order REFLECTIVE construct
+  composite("G_Factor_Reflective", c("PA", "NA"), weights = mode_A) # <-- CRITICAL CHANGE: mode_A
+)
+
+# 2. Define the structural model
+second_order_sm_panas_reflective <- relationships(
+  paths(from = "G_Factor_Reflective", to = "Activation_Anchor")
+)
+
+# 3. Estimate the final reflective model
+pls_panas_reflective <- estimate_pls(
+  data = panas_with_scores,
+  measurement_model = second_order_mm_reflective,
+  structural_model = second_order_sm_panas_reflective
+)
+
+# 4. Analyze results (reliability for reflective constructs)
+summary_panas_reflective <- summary(pls_panas_reflective)
+print(summary_panas_reflective$reliability)
+
+# 5. Bootstrap for loading significance
+boot_panas_reflective <- bootstrap_model(pls_panas_reflective, nboot = 5000)
+summary(boot_panas_reflective)$bootstrapped_loadings
+
+```
+
+### Reflexivo com lavaan
+
+O modelo teórico não funciona no BR
+
+```{r}
+### 1. Two-Factor Correlated Model (Canonical Model)
+#----------------------------------------------------
+
+two_factor_syntax <- '
+  PAf =~ Active + Attentive + Determined + Excited + Interested + Proud + 
+        Alert + Enthusiastic + Strong + Inspired
+  
+  NAf =~ Ashamed + Distressed + Guilty + Irritable + Scared + Hostile + 
+        Jittery + Nervous + Afraid + Upset
+'
+
+fit_two_factor <- cfa(
+  two_factor_syntax, 
+  data = panas_data, 
+  ordered = TRUE, 
+  estimator = "WLSMV", 
+  std.lv = TRUE
+)
+
+fitMeasures(fit_two_factor, c("chisq", "df", "pvalue", "cfi", "rmsea", "rmsea.ci.lower", "rmsea.ci.upper"))
+semTools::compRelSEM(fit_two_factor)
+
+
+```
+
+### Ajuste no modelo teórico
+
+A literatura aponta que alerta carrega nos dois fatores
+
+
+```{r}
+### 2. Two-Factor Model with Cross-Loading for "Alert"
+#---------------------------------------------------------
+# Based on literature suggesting "Alert" can load on both factors.
+
+crossload_syntax <- '
+  PAf =~ Active + Attentive + Determined + Excited + Interested + Proud + 
+        Alert + Enthusiastic + Strong + Inspired
+  
+  NAf =~ Ashamed + Distressed + Guilty + Irritable + Scared + Hostile + 
+        Jittery + Nervous + Afraid + Upset + Alert  # Cross-loading added here
+'
+
+fit_crossload <- cfa(
+  crossload_syntax, 
+  data = panas_data, 
+  ordered = TRUE, 
+  estimator = "WLSMV", 
+  std.lv = TRUE
+)
+
+fitMeasures(fit_crossload, c("chisq", "df", "pvalue", "cfi", "rmsea", "rmsea.ci.lower", "rmsea.ci.upper"))
+summary(fit_crossload, fit.measures = TRUE, standardized = TRUE)
+semTools::compRelSEM(fit_crossload)
+
+```
+
+### Modelo bifatorial reflexivo se ajuta melhor aos dados
+
+
+```{r}
+### 3. Orthogonal Bifactor Model
+#---------------------------------
+# Tests a general factor (G_Factor) alongside two specific group factors.
+# `orthogonal = TRUE` means the specific factors (PA_Specific, NA_Specific) are uncorrelated.
+
+bifactor_syntax <- '
+  G_Factor =~ Active + Ashamed + Attentive + Distressed + Determined + Guilty + 
+              Excited + Irritable + Interested + Scared + Proud + Hostile + 
+              Alert + Jittery + Enthusiastic + Nervous + Strong + Afraid + 
+              Inspired + Upset
+
+  PAf =~ Active + Attentive + Determined + Excited + Interested + Proud + 
+                 Alert + Enthusiastic + Strong + Inspired   
+ 
+  NAf =~ Ashamed + Distressed + Guilty + Irritable + Scared + Hostile + 
+                 Jittery + Nervous + Afraid + Upset
+'
+
+fit_bifactor_orthogonal <- cfa(
+  bifactor_syntax, 
+  data = panas_data, 
+  ordered = TRUE, 
+  orthogonal = TRUE, # Key setting for this model
+  estimator = "WLSMV", 
+  std.lv = TRUE
+)
+
+fitMeasures(fit_bifactor_orthogonal, c("chisq", "df", "pvalue", "cfi", "rmsea", "rmsea.ci.lower", "rmsea.ci.upper"))
+summary(fit_bifactor_orthogonal, standardized = TRUE)
+semTools::compRelSEM(fit_bifactor_orthogonal)
+
+```
+
+### Modelo bifatorial constrangido
+
+Então fazemos algumas constrições para que ele seja mais parcimonioso
+
+```{r}
+### 4. Constrained Bifactor Model (for Parsimony)
+#---------------------------------------------------
+# This model sets certain loadings to zero based on theory or modification indices
+# to create a more parsimonious and stable model.
+
+constrained_bifactor_syntax <- '
+  G_Factor =~ Active + 0*Ashamed + Attentive + 0*Distressed + Determined + 
+              0*Guilty + Excited + 0*Irritable + Interested + 0*Scared + 
+              Proud + 0*Hostile + Alert + 0*Jittery + 
+              Enthusiastic + 0*Nervous + Strong + Afraid + 
+              Inspired + 0*Upset
+
+  PAf =~ 0*Active + 0*Attentive + 0*Determined + Excited + Interested + Proud +  
+                 0*Alert + Enthusiastic + Strong + Inspired   
+
+  NAf =~ Ashamed + Distressed + Guilty + Irritable + Scared + Hostile + 
+                 Jittery + Nervous + Afraid + Upset + Alert
+'
+
+fit_bifactor_constrained <- cfa(
+  constrained_bifactor_syntax, 
+  data = panas_data, 
+  ordered = TRUE, 
+  orthogonal = TRUE,
+  estimator = "WLSMV", 
+  std.lv = TRUE
+)
+
+fitMeasures(fit_bifactor_constrained, c("chisq", "df", "pvalue", "cfi", "rmsea", "rmsea.ci.lower", "rmsea.ci.upper"))
+summary(fit_bifactor_constrained, standardized = TRUE)
+semTools::compRelSEM(fit_bifactor_constrained)
+
+```
+
+### Teste de modelo com segunda ordem
+
+```{r}
+### 5. Oblique Bifactor Model
+#---------------------------------------------------
+# This is similar to the bifactor model, but allows the specific factors
+# to be correlated (`orthogonal = FALSE`).
+
+oblique_bifactor_syntax <- bifactor_syntax # The syntax is the same as the orthogonal model
+
+fit_bifactor_oblique <- cfa(
+  oblique_bifactor_syntax, 
+  data = panas_data, 
+  ordered = TRUE, 
+  orthogonal = FALSE, # Key setting: allows specific factors to correlate
+  estimator = "WLSMV", 
+  std.lv = TRUE
+)
+
+fitMeasures(fit_bifactor_oblique, c("chisq", "df", "pvalue", "cfi", "rmsea", "rmsea.ci.lower", "rmsea.ci.upper"))
+summary(fit_bifactor_oblique, standardized = TRUE)
+semTools::compRelSEM(fit_bifactor_oblique)
+
+
+
+```
+
+### Better model plot
+
+```{r}
+
+
+#png("Figure9.png", height = 8, width = 12, units = 'in', res = 300)
+
+semPaths(
+  fit_bifactor_constrained,            
+  what = "std",
+  whatLabels = "est",
+  edge.color="black",
+  
+  bifactor = "G_Factor",    
+  
+  
+  layout = "tree2",         
+  residuals = FALSE,
+  intercepts = FALSE,
+  thresholds = FALSE,
+  
+  edge.label.cex = 0.7,
+  sizeMan = 5,
+  sizeLat = 10,
+  sizeLat2=8,
+  edge.label.position=0.85,
+  
+  style = "lisrel",
+  nCharNodes = 0,
+  mar = c(2, 1, 4, 1)      
+)
+
+# Fecha o dispositivo gráfico e salva o arquivo
+#dev.off()
+
+
+```
+
+```{r} 
+
+# Extrair os escores fatoriais (usando o método de regressão padrão)
+cfa_scores <- as.data.frame(lavPredict(fit_bifactor_constrained))
+#head(cfa_scores)
+
+# Os escores estão dentro do objeto, no elemento 'scores'
+pca_scores <- as.data.frame(pca_results_psych$scores)
+#head(pca_scores)
+
+
+# Verificar se o número de linhas é o mesmo 
+all_scores <- cbind(cfa_scores, pca_scores)
+#head(all_scores)
+
+
+# Calcular e Visualizar a Matriz de Correlação
+MVN_scores <- MVN::mvn(all_scores, univariate_test = "SW")
+MVN_scores$univariate_normality
+
+# Matriz de correlação simples
+correlation_matrix <- cor(all_scores, method = "spearman")
+
+# Arredondar para melhor visualização
+correlation_matrix_rounded <- round(correlation_matrix, 2)
+print(correlation_matrix_rounded)
+
+
+# Visualização gráfica com GGally (mais informativo)
+# Este gráfico mostra as correlações, as distribuições e os scatterplots
+ggpairs_plot <- ggpairs(
+  all_scores,
+  title = "",
+  upper = list(continuous = wrap("cor", method = "spearman", size = 4)), # Mostra a correlação
+  lower = list(continuous = wrap("points", alpha = 0.3)) # Mostra o scatterplot
+)
+
+print(ggpairs_plot)
+#ggsave("Figure10.png", plot = ggpairs_plot, bg = "white", width = 10, 
+       height = 6, dpi = 300)
+
+
+```
+
+# Modelo bifatorial com fatores específicos covariando x bifatorial de antes
+
+```{r}
+bifactor_model_syntax <- '
+  # Fator Geral (G) - Notei que você restringiu alguns itens a zero, o que é uma escolha teórica interessante.
+  # Mantendo sua especificação.
+  G_Factor =~ PN1ativo + PN2envergo + PN3atento + PN4aflit + PN5determ + 
+              PN6culpado + PN7empol + PN8irrit + PN9interes + PN10medo + 
+              PN11orgul + PN12hostil + PN13alerta + PN14inquie + 
+              PN15entusia + PN16nervo + PN17forte + PN18apavo + 
+              PN19inspi + PN20chate
+
+  # Fator de Grupo Afeto Positivo (AP)
+  AP =~ PN1ativo + PN3atento + PN5determ + PN7empol + PN9interes + PN11orgul +  
+        PN13alerta + PN15entusia + PN17forte + PN19inspi   
+
+  # Fator de Grupo Afeto Negativo (AN)
+  AN =~ PN2envergo + PN4aflit + PN6culpado + PN8irrit + PN10medo + PN12hostil + PN14inquie +
+        PN16nervo + PN18apavo + PN20chate  + PN13alerta
+'
+
+#--- PASSO 1: Rodar o Modelo Bifatorial ORTOGONAL (o seu modelo atual) ---
+# (Renomeado para clareza)
+fit_bifactor_ortho <- cfa(bifactor_model_syntax, 
+                          data = panas_data, 
+                          ordered = T, 
+                          orthogonal = T, # Força G ~~ AP, G ~~ AN, e AP ~~ AN a serem zero.
+                          estimator = "WLSMV", 
+                          std.lv=TRUE)
+
+#--- PASSO 2: Rodar o Modelo Bifatorial OBLÍQUO ---
+# A única mudança é remover orthogonal = T.
+# O padrão do `cfa` em modelos bifatoriais é fixar a covariância entre o G-factor e os fatores de grupo em zero,
+# mas deixar os fatores de grupo livres para se correlacionarem. Isso é exatamente o que queremos.
+fit_bifactor_oblique <- cfa(bifactor_model_syntax, 
+                            data = panas_data, 
+                            ordered = T, 
+                            # orthogonal = T, # REMOVIDO!
+                            estimator = "WLSMV", 
+                            std.lv=TRUE)
+
+
+#--- PASSO 3: Comparar os modelos ---
+
+# Obter os índices de ajuste de ambos
+fit_ortho_measures <- fitmeasures(fit_bifactor_ortho, c("chisq", "df", "pvalue", "cfi", "rmsea",
+                                                        "rmsea.ci.lower","rmsea.ci.upper"))
+fit_oblique_measures <- fitmeasures(fit_bifactor_oblique, c("chisq", "df", "pvalue", "cfi", "rmsea",
+                                                            "rmsea.ci.lower","rmsea.ci.upper"))
+
+# Imprimir para comparação visual
+cat("--- Ajuste do Modelo Ortogonal ---\n")
+print(round(fit_ortho_measures, 3))
+
+cat("\n--- Ajuste do Modelo Oblíquo ---\n")
+print(round(fit_oblique_measures, 3))
+
+
+# Comparação formal usando o teste da diferença de qui-quadrado (para estimador WLSMV)
+# Isso testa se o modelo mais complexo (oblíquo) se ajusta significativamente melhor que o modelo mais simples (ortogonal)
+cat("\n--- Teste da Diferença de Qui-Quadrado (Comparando Modelos) ---\n")
+#lavTestLRT(fit_bifactor_ortho, fit_bifactor_oblique)
+
+# Ver o resumo do modelo oblíquo para ver a correlação estimada entre AP e AN
+cat("\n--- Resumo do Modelo Oblíquo (Verificar Covariância AP~~AN) ---\n")
+summary(fit_bifactor_oblique, standardized = TRUE, fit.measures = TRUE)
+```
+
+```{r}
+sessionInfo()
+
+```
+
+
+
+
