@@ -1,4 +1,4 @@
-# A Arquitetura da Intensidade: Evidências Computacionais e Psicométricas
+# Intensidade, Saliência e Magnitude do Afeto: a recorrência da Estrutura Hierárquica 
 
 ![Status](https://img.shields.io/badge/Status-Active-green)
 ![Language](https://img.shields.io/badge/Language-R_%7C_Python-blue)
