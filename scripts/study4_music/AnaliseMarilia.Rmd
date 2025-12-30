@@ -1,0 +1,908 @@
+---
+title: "Análises de Estímulos Musicais"
+author: "Frederico Pedrosa"
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    latex_engine: xelatex  
+    highlight: tango
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: hide
+    theme: cosmo
+    highlight: tango
+header-includes:
+  - \usepackage{placeins} 
+---
+
+**Desenho do Estudo**
+
+O estudo avaliou 200 participantes (100 músicos e 100 não-músicos, 18-40 anos) em uma tarefa de reconhecimento emocional. Foram utilizados 116 estímulos musicais inéditos, compostos para evocar quatro emoções distintas (Alegria, Medo/Raiva, Tristeza e Serenidade), representantes dos 4 quadrantes do Modelo Circumplexo. A tarefa consistiu em identificar a emoção percebida em cada estímulo (Acurácia/Congruência) e avaliar valência e alerta (SAM). Variáveis de controle incluíram BDI, BAI e questionário musical.
+
+**Resumo**
+
+*Unidimensionalidade Hierárquica* 
+A Análise Fatorial Confirmatória (CFA) indicou que um Fator Geral de Habilidade (G_Ability) explica a vasta maioria da variância das emoções específicas (Felicidade, Medo/Raiva, Tristeza), com confiabilidade excelente (ω = 0.92).
+
+*Estabilidade Clínica* 
+Modelos Mistos e Random Forest confirmaram que o desempenho no teste não é influenciado por sintomatologia ansiosa (BAI) ou depressiva (BDI). A variância explicada pelo Random Forest foi negativa (-14%), comprovando a ausência de vieses não-lineares associados à psicopatologia.
+
+*Independência de Treino*: Não houve diferença significativa entre músicos e não-músicos, nem influência da escolaridade ou idade.
+
+*Preditação*: A única variável preditora significativa foi o Sexo (p = .023) no modelo linear; nó raiz na árvore de decisão), com mulheres apresentando uma leve vantagem no reconhecimento emocional.
+
+# Set Up
+
+```{r setup, echo=FALSE}
+library(readxl)
+library(tidyr)
+library(tidyverse)
+library(dplyr)
+library(conflicted)
+library(ltm)
+library(lavaan)
+library(semTools)
+library(lme4)
+library(lmerTest) 
+library(sjPlot) 
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(ggeffects)
+
+conflict_prefer("select", "dplyr")
+data <- read_excel("~/PIBIT2025/Circumplex/BasesDados/Marilia/RawData/Raw_Data.xlsx")
+```
+
+## Arrumando o data
+
+```{r}
+
+
+# 1. Definir os números sequenciais de 1 a 116, formatados com zeros à esquerda (001, 002, ..., 116)
+stimuli_numbers <- sprintf("%03d", 1:116)
+
+# 2. Renomear o grupo de Emoção Percebida (colunas 27 a 142)
+names(data)[27:142] <- paste0("Emotion_St_", stimuli_numbers)
+
+# 3. Renomear o grupo de Congruência (colunas 144 a 259)
+names(data)[144:259] <- paste0("Congruence_St_", stimuli_numbers)
+
+# 4. Renomear o grupo de Arousal (colunas 267 a 382)
+names(data)[267:382] <- paste0("Arousal_St_", stimuli_numbers)
+
+# 5. Renomear o grupo de Valence (colunas 384 a 499)
+names(data)[384:499] <- paste0("Valence_St_", stimuli_numbers)
+
+# 6. (Recomendado) Remover as colunas vazias se estiverem em branco
+data <- data[, -c(26, 143, 266, 383)] # Remove as colunas pelos índices
+
+# 7. Verifique o resultado
+head(names(data))
+
+```
+
+## Transformar em formato longo
+
+
+```{r longo}
+
+# 1. Pivotar as respostas de EMOÇÃO PERCEBIDA (com o prefixo correto)
+emotion_long <- data %>%
+  select(Participants, Group, starts_with("Emotion_St_")) %>%
+  pivot_longer(
+    cols = -c(Participants, Group),
+    names_to = "Stimulus_ID",
+    names_prefix = "Emotion_St_", # <--- AJUSTE AQUI
+    values_to = "Perceived_Emotion"
+  )
+
+# 2. Pivotar as respostas de CONGRUÊNCIA
+congruence_long <- data %>%
+  select(Participants, starts_with("Congruence_St_")) %>%
+  pivot_longer(
+    cols = -Participants,
+    names_to = "Stimulus_ID",
+    names_prefix = "Congruence_St_",
+    values_to = "Congruence"
+  )
+
+# 3. Pivotar as respostas de AROUSAL
+arousal_long <- data %>%
+  select(Participants, starts_with("Arousal_St_")) %>%
+  pivot_longer(
+    cols = -Participants,
+    names_to = "Stimulus_ID",
+    names_prefix = "Arousal_St_",
+    values_to = "Arousal"
+  )
+
+# 4. Pivotar as respostas de VALÊNCIA
+valence_long <- data %>%
+  select(Participants, starts_with("Valence_St_")) %>%
+  pivot_longer(
+    cols = -Participants,
+    names_to = "Stimulus_ID",
+    names_prefix = "Valence_St_",
+    values_to = "Valence"
+  )
+
+# 5. Juntar tudo em um único dataframe longo
+data_long <- emotion_long %>%
+  left_join(congruence_long, by = c("Participants", "Stimulus_ID")) %>%
+  left_join(arousal_long, by = c("Participants", "Stimulus_ID")) %>%
+  left_join(valence_long, by = c("Participants", "Stimulus_ID")) %>%
+  mutate(Stimulus_ID = as.numeric(Stimulus_ID)) # Agora isso vai funcionar!
+
+# 6. Adicionar a coluna com a EMOÇÃO PRETENDIDA para cada estímulo
+data_long <- data_long %>%
+  mutate(
+    Intended_Emotion = case_when(
+      Stimulus_ID <= 29 ~ "Happiness",
+      Stimulus_ID <= 58 ~ "Fear/Anger",
+      Stimulus_ID <= 87 ~ "Serenity",
+      TRUE              ~ "Sadness"
+    )
+  )
+
+# 7. Verifique o resultado (agora deve estar correto)
+head(data_long)
+
+```
+
+# Seleção de melhores estímulos por TRI de 2pl
+
+## Felicidade
+
+```{r TRI}
+# --- Criar o Dataframe Largo Completo ---
+all_responses_wide <- data_long %>%
+  dplyr::select(Participants, Stimulus_ID, Congruence) %>%
+  
+  pivot_wider(
+    names_from = Stimulus_ID,
+    values_from = Congruence,
+    names_prefix = "St_"
+  )
+
+# --- TRI para "Felicidade" usando o dataframe completo ---
+
+# 1. Definir os nomes das colunas de "Felicidade" (Estímulos 1 a 29)
+happiness_cols <- paste0("St_", 1:29)
+
+# 2. Selecionar apenas essas colunas para a análise
+happiness_response_matrix <- all_responses_wide %>%
+  dplyr::select(all_of(happiness_cols))
+
+# 3. Rodar o modelo TRI 2PL
+model_happiness <- ltm(happiness_response_matrix ~ z1, IRT.param = TRUE)
+
+# --- PASSO 3: Analisar e Exibir os Resultados ---
+
+# Extrair e organizar os coeficientes
+coef_happiness <- as.data.frame(coef(model_happiness))
+
+results_happiness <- coef_happiness %>%
+  rename(Difficulty = Dffclt, Discrimination = Dscrmn) %>%
+  rownames_to_column(var = "Stimulus_ID") %>%
+  mutate(Stimulus_ID = as.numeric(str_replace(Stimulus_ID, "St_", ""))) %>%
+  arrange(desc(Discrimination)) # Ordena pelos itens mais discriminativos
+
+# Mostrar os resultados
+print("--- Parâmetros dos Itens para Felicidade (ordenado por Discriminação) ---")
+print(results_happiness)
+
+```
+
+## Medo/Raiva
+
+```{r Fear}
+
+# 1. Definir os nomes das colunas de "Fear/Anger" (Estímulos 30 a 58)
+fearanger_cols <- paste0("St_", 30:58)
+
+# 2. Selecionar apenas essas colunas para a análise
+fearanger_response_matrix <- all_responses_wide %>%
+  dplyr::select(all_of(fearanger_cols))
+
+# 3. Rodar o modelo TRI 2PL
+model_fearanger <- ltm(fearanger_response_matrix ~ z1, IRT.param = TRUE)
+
+# 4. Extrair, organizar e exibir os resultados
+coef_fearanger <- as.data.frame(coef(model_fearanger))
+
+results_fearanger <- coef_fearanger %>%
+  rename(Difficulty = Dffclt, Discrimination = Dscrmn) %>%
+  rownames_to_column(var = "Stimulus_ID") %>%
+  mutate(Stimulus_ID = as.numeric(str_replace(Stimulus_ID, "St_", ""))) %>%
+  arrange(desc(Discrimination))
+
+# Mostrar os resultados
+print("--- Parâmetros dos Itens para Fear/Anger (ordenado por Discriminação) ---")
+print(results_fearanger)
+
+```
+
+## Serenidade
+
+Apenas 2 estímulos foram considerados adequados
+
+```{r serenity}
+
+# --- Análise TRI para "Serenity" ---
+
+# 1. Definir os nomes das colunas de "Serenity" (Estímulos 59 a 87)
+serenity_cols <- paste0("St_", 59:87)
+
+# 2. Selecionar apenas essas colunas para a análise
+serenity_response_matrix <- all_responses_wide %>%
+  dplyr::select(all_of(serenity_cols))
+
+# 3. Rodar o modelo TRI 2PL
+model_serenity <- ltm(serenity_response_matrix ~ z1, IRT.param = TRUE)
+
+# 4. Extrair, organizar e exibir os resultados
+coef_serenity <- as.data.frame(coef(model_serenity))
+
+results_serenity <- coef_serenity %>%
+  rename(Difficulty = Dffclt, Discrimination = Dscrmn) %>%
+  rownames_to_column(var = "Stimulus_ID") %>%
+  mutate(Stimulus_ID = as.numeric(str_replace(Stimulus_ID, "St_", ""))) %>%
+  arrange(desc(Discrimination))
+
+# Mostrar os resultados
+print("--- Parâmetros dos Itens para Serenity (ordenado por Discriminação) ---")
+print(results_serenity)
+
+```
+
+## Tristeza
+
+```{r}
+
+# 1. Definir os nomes das colunas de "Sadness" (Estímulos 88 a 116)
+sadness_cols <- paste0("St_", 88:116)
+
+# 2. Selecionar apenas essas colunas para a análise
+sadness_response_matrix <- all_responses_wide %>%
+  dplyr::select(all_of(sadness_cols))
+
+# 3. Rodar o modelo TRI 2PL
+model_sadness <- ltm(sadness_response_matrix ~ z1, IRT.param = TRUE)
+
+# 4. Extrair, organizar e exibir os resultados
+coef_sadness <- as.data.frame(coef(model_sadness))
+
+results_sadness <- coef_sadness %>%
+  rename(Difficulty = Dffclt, Discrimination = Dscrmn) %>%
+  rownames_to_column(var = "Stimulus_ID") %>%
+  mutate(Stimulus_ID = as.numeric(str_replace(Stimulus_ID, "St_", ""))) %>%
+  arrange(desc(Discrimination))
+
+# Mostrar os resultados
+print("--- Parâmetros dos Itens para Sadness (ordenado por Discriminação) ---")
+print(results_sadness)
+
+```
+
+# Criar data frame com os melhores itens de cada categoria 
+
+```{r}
+
+# Criando um dataframe com os melhores itens para usar em nosso código
+best_items_df <- bind_rows(
+  results_happiness %>% head(10) %>% mutate(Factor = "Happiness"),
+  results_fearanger %>% head(10) %>% mutate(Factor = "FearAnger"),
+  results_sadness %>% head(10) %>% mutate(Factor = "Sadness")
+)
+
+# Extrair apenas os IDs dos estímulos selecionados
+selected_stimuli_ids <- best_items_df$Stimulus_ID
+
+# Ver a lista final de 30 itens
+print(selected_stimuli_ids)
+
+#### Passo 2: Preparar os Dados para a CFA
+# Filtrar o dataframe largo para conter apenas as colunas dos melhores itens
+cfa_data_final <- all_responses_wide %>%
+  dplyr::select(all_of(paste0("St_", selected_stimuli_ids)))
+
+# Declarar as variáveis como categóricas (ordenadas) para o lavaan usar o estimador WLSMV
+cfa_data_final[] <- lapply(cfa_data_final, ordered)
+
+```
+
+# Análise Fatorial Confirmatória das três categorias com estímulos adequados
+
+## Modelo com 3 dimensões
+
+Já que os estimúlos de serenidade tem poucos itns com discriminação adequada
+
+```{r}
+
+conflicts_prefer(dplyr::filter)
+
+# Extrair os IDs para cada fator para facilitar a escrita
+ids_happy <- best_items_df %>% filter(Factor == "Happiness") %>% pull(Stimulus_ID)
+ids_fear <- best_items_df %>% filter(Factor == "FearAnger") %>% pull(Stimulus_ID)
+ids_sad <- best_items_df %>% filter(Factor == "Sadness") %>% pull(Stimulus_ID)
+
+# Criar a string do modelo manualmente
+cfa_model_final_string <- '
+  Happiness =~ St_6 + St_13 + St_15 + St_14 + St_19 + St_3 + St_21 
+  + St_18 + St_27 + St_20
+  FearAnger =~ St_35 + St_41 + St_43 + St_36 + St_31 + St_51 + St_45 
+  + St_33 + St_42 + St_54
+  Sadness   =~ St_95 + St_100 + St_101 + St_115 + St_111 + St_96 
+  + St_90 + St_116 + St_92 + St_114
+
+'
+
+# Rodar a Análise Fatorial Confirmatória
+fit_cfa_final <- cfa(
+  model = cfa_model_final_string,
+  data = cfa_data_final,
+  estimator = "wlsmv",
+  ordered = T
+)
+
+# --- ANÁLISE DOS RESULTADOS ---
+
+# 1. Verificar os Índices de Ajuste do Modelo
+print("--- Índices de Ajuste do Modelo ---")
+fitmeasures(fit_cfa_final, c("chisq", "df", "pvalue", "cfi", "tli", "rmsea", "srmr"))
+
+# 2. Ver o resumo completo com as cargas fatoriais padronizadas
+print("--- Resumo Completo do Modelo ---")
+summary(fit_cfa_final, standardized = TRUE, fit.measures = TRUE)
+
+# 3. Calcular a Fidedignidade (Confiabilidade Composta - Ômega)
+print("--- Fidedignidade (Confiabilidade Composta) ---")
+compRelSEM(fit_cfa_final)
+```
+
+## Modelo Unidimensional
+
+Como os três fatores apresentam alta correlação e confiabilidade baixa envestigou-se o modelo unifatorial
+
+A estrutura unidimensional se constitui de um fator em que todos os itens carregam de forma positiva consistentemente com os dados semânticos e da PANAS.
+
+```{r}
+cfa_GFactor <- '
+  # Fator Geral (G)
+  G =~ St_6 + St_13 + St_15 + St_14 + St_19 + St_3 + St_21 + St_18 + St_27 
+  + St_20 + St_35 + St_41 + St_43 + St_36 + St_31 + St_51 + St_45 + St_33 
+  + St_42 + St_54 + St_95 + St_100 + St_101 + St_115 + St_111 + St_96 + St_90 
+  + St_116 + St_92 + St_114
+'
+
+# Rodar a CFA Bifatorial
+fit_GFactorr <- cfa(
+  model = cfa_GFactor,
+  data = cfa_data_final,
+  estimator = "wlsmv",
+  ordered = TRUE,
+  orthogonal = TRUE  # Este argumento é fundamental para o modelo bifatorial
+)
+
+summary(fit_GFactorr, standardized = TRUE, fit.measures = TRUE)
+fitmeasures(fit_GFactorr, c("chisq", "df", "pvalue", "cfi", "tli", "rmsea", "srmr"))
+semTools::compRelSEM(fit_GFactorr)
+
+```
+
+## Modelo Bifatorial
+
+A estrutura bifatorial foi testada mas o modelo "quebra" porque o Fator Geral (G) "suga" quase toda a variância, deixando os fatores específicos (Happiness, Fear, Sadness) com variância zero ou negativa (os chamados Heywood Cases). É por isso que os Omegas específicos deram quase zero (0.064, 0.006).
+
+```{r}
+cfa_bifactor_string <- '
+  # Fator Geral (G)
+  G =~ St_6 + St_13 + St_15 + St_14 + St_19 + St_3 + St_21 + St_18 + St_27 
+  + St_20 + St_35 + St_41 + St_43 + St_36 + St_31 + St_51 + St_45 + St_33 
+  + St_42 + St_54 + St_95 + St_100 + St_101 + St_115 + St_111 + St_96 + St_90 
+  + St_116 + St_92 + St_114
+
+  # Fatores de Grupo Específicos
+  Happiness =~ St_6 + St_13 + St_15 + St_14 + St_19 + St_3 + St_21 + St_18 
+  + St_27 + St_20
+  FearAnger =~ St_35 + St_41 + St_43 + St_36 + St_31 + St_51 + St_45 + St_33 
+  + St_42 + St_54
+  Sadness   =~ St_95 + St_100 + St_101 + St_115 + St_111 + St_96 + St_90 
+  + St_116 + St_92 + St_114
+'
+
+# Rodar a CFA Bifatorial
+fit_cfa_bifactor <- cfa(
+  model = cfa_bifactor_string,
+  data = cfa_data_final,
+  estimator = "wlsmv",
+  ordered = TRUE,
+  orthogonal = TRUE
+)
+
+
+```
+
+O modelo não convergiu, provavelmente por ser muito "dispendioso" para o tanto de dados que temos
+
+```{r}
+compRelSEM(fit_cfa_bifactor)
+```
+
+## Fator de Segunda Ordem
+
+Rouba toda a variância dos fatores de primeira
+
+```{r}
+# Definição do Modelo de Segunda Ordem
+cfa_second_order_string <- '
+  
+  Happiness =~ St_6 + St_13 + St_15 + St_14 + St_19 + St_3 + St_21 
+  + St_18 + St_27 + St_20
+  FearAnger =~ St_35 + St_41 + St_43 + St_36 + St_31 + St_51 + St_45 
+  + St_33 + St_42 + St_54
+  Sadness   =~ St_95 + St_100 + St_101 + St_115 + St_111 + St_96 
+  + St_90 + St_116 + St_92 + St_114
+
+  # Fator de Segunda Ordem 
+  G_Ability =~ Happiness + FearAnger + Sadness
+'
+
+# Rodar a Análise
+fit_second_order <- cfa(
+  model = cfa_second_order_string,
+  data = cfa_data_final,
+  estimator = "wlsmv",
+  ordered = TRUE
+)
+
+# Ver resultados
+summary(fit_second_order, standardized = TRUE, fit.measures = TRUE)
+
+fitmeasures(fit_second_order, c("chisq", "df", "pvalue", "cfi", "tli", 
+                                "rmsea", "srmr"))
+
+# Calcular confiabilidade (Omega) para o modelo de segunda ordem
+compRelSEM(fit_second_order)
+
+
+```
+
+## Aqui considerar só a confiabilidade do Fator Geral
+
+A confiabilidade composta foi calculada através do coeficiente Ômega de McDonald, considerando a natureza ordinal dos dados e a estrutura de segunda ordem.
+O Fator Geral (G_Ability) apresentou um índice de confiabilidade excelente (ω = 0.923), demonstrando alta precisão na mensuração da habilidade global de reconhecimento emocional.
+
+Os fatores de primeira ordem também apresentaram índices adequados (Felicidade: 0.885; Medo/Raiva: 0.918; Tristeza: 0.757). Contudo, dada a elevada carga do fator geral sobre estes domínios específicos, esses índices refletem, em grande parte, a confiabilidade da variância comum (G) compartilhada pelos itens.
+
+```{r}
+omega_G <- compRelSEM(fit_second_order, higher = "G_Ability", ord.scale = FALSE)
+print(omega_G)
+
+```
+
+# Correlação com BDI e BAI
+
+##Extração dos escores fatoriais do fator de segunda ordem
+
+```{r}
+# Extrair os escores do modelo de segunda ordem
+fator_scores <- lavPredict(fit_second_order)
+
+# Vamos ver o que ele gerou (deve ter Happiness, FearAnger, Sadness e G_Ability)
+head(fator_scores)
+
+# Transformar em um dataframe para facilitar
+fator_scores_df <- as.data.frame(fator_scores)
+
+# O que nos interessa é apenas a coluna "G_Ability"
+# Vamos adicionar essa coluna ao seu dataframe original 'data'
+# IMPORTANTE: Certifique-se de que a ordem das linhas não mudou (se não houve exclusão de dados)
+data$G_Score <- fator_scores_df$G_Ability
+
+# Verifique se deu certo
+head(data %>% select(Participants, BAI, BDI, G_Score))
+```
+
+## Correlações
+
+A base de dados só tem os escores da soma de cada instrumento.
+
+```{r}
+# --- Correlação com BAI (Ansiedade) ---
+cor_bai <- cor.test(data$G_Score, data$BAI, method = "spearman")
+print("--- Correlação entre Fator G e BAI (Spearman) ---")
+print(cor_bai)
+
+# --- Correlação com BDI (Depressão) ---
+cor_bdi <- cor.test(data$G_Score, data$BDI, method = "spearman")
+print("--- Correlação entre Fator G e BDI (Spearman) ---")
+print(cor_bdi)
+
+```
+
+### Visualização
+
+```{r}
+
+library(ggplot2)
+
+# Gráfico G-Factor vs BAI
+ggplot(data, aes(x = BAI, y = G_Score)) +
+  geom_point(alpha = 0.6, color = "blue") +
+  geom_smooth(method = "lm", color = "red") +
+  labs(title = "Relação entre Habilidade Emocional (G) e Ansiedade (BAI)",
+       x = "Escore BAI", y = "Habilidade Emocional Geral (Escore Fatorial)") +
+  theme_minimal()
+
+# Gráfico G-Factor vs BDI
+ggplot(data, aes(x = BDI, y = G_Score)) +
+  geom_point(alpha = 0.6, color = "darkgreen") +
+  geom_smooth(method = "lm", color = "red") +
+  labs(title = "Relação entre Habilidade Emocional (G) e Depressão (BDI)",
+       x = "Escore BDI", y = "Habilidade Emocional Geral (Escore Fatorial)") +
+  theme_minimal()
+```
+
+# Modelos mistos
+
+## Arrumar o data
+
+```{r}
+
+# 1. Recuperar a lista dos 30 melhores itens 
+# selected_stimuli_ids <- c(6, 13, 15, ..., 114) # Os IDs que o TRI selecionou
+
+# 2. Filtrar o data_long para ter apenas esses itens
+# E garantir que as colunas BAI e BDI estão lá 
+data_mixed <- data_long %>%
+  filter(Stimulus_ID %in% selected_stimuli_ids) %>%
+  # Garantir que a variável de resposta é numérica (0 ou 1)
+  mutate(Congruence = as.numeric(Congruence)) %>%
+  # Juntar com os dados clínicos (se já não estiverem no data_long)
+  left_join(data %>% select(Participants, BAI, BDI), by = "Participants")
+
+# Verifique se deu certo
+names(data_mixed)
+
+```
+## Modelo misto para ansiedade
+
+A chance de acerto para Medo/Raiva (intercepto) é alta e significativa. Os participantes são bons em identificar Medo e Raiva.
+
+Sadness (-1.32, p < .001): o coeficiente é negativo e altamente significativo, além do Odds Ratio ser 0.266.
+É muito mais difícil reconhecer Tristeza do que Medo/Raiva (a chance de acerto cai para cerca de 26% da chance original).
+
+Existe uma tendência muito leve (não significativa estatisticamente a 5%, mas < 10%) de que, conforme a ansiedade aumenta, o reconhecimento de tristeza melhora ligeiramente (ou a dificuldade diminui). 
+
+Habilidade Emocional (Fator G) é independente do estado clínico atual do paciente. Ou seja, uma pessoa deprimida não "desaprende" a reconhecer emoções no seu teste. Isso sugere que o teste mede um traço estável (habilidade cognitiva) e não um estado passageiro.
+
+
+
+```{r}
+# --- MODELO PARA ANSIEDADE (BAI) ---
+model_bai <- glmer(Congruence ~ BAI * Intended_Emotion + 
+                     (1 | Participants) +  # Efeito aleatório do Participante (Intercepto)
+                     (1 | Stimulus_ID),    # Efeito aleatório do Item (Dificuldade)
+                   data = data_mixed,
+                   family = binomial,
+                   control = glmerControl(optimizer = "bobyqa")) # Ajuda a convergir
+
+# Ver resultados
+summary(model_bai)
+anova(model_bai, type = "III")
+
+```
+
+```{r}
+exp(fixef(model_bai))
+```
+
+```{r}
+# Gráfico da interação BAI * Emoção
+plot(ggpredict(model_bai, terms = c("BAI", "Intended_Emotion"))) +
+  labs(y = "Probabilidade de Acerto", x = "Score BAI", title = "Efeito da Ansiedade por Tipo de Emoção")
+```
+
+## Modelo misto para depressão
+
+```{r}
+# --- MODELO PARA DEPRESSÃO (BDI) ---
+model_bdi <- glmer(Congruence ~ BDI * Intended_Emotion + 
+                     (1 | Participants) + 
+                     (1 | Stimulus_ID),
+                   data = data_mixed,
+                   family = binomial,
+                   control = glmerControl(optimizer = "bobyqa"))
+
+summary(model_bdi)
+exp(fixef(model_bdi))
+
+```
+
+```{r} 
+plot(ggpredict(model_bdi, terms = c("BDI", "Intended_Emotion"))) +
+  labs(y = "Probabilidade de Acerto", x = "Score BDI", title = "Efeito da Depressão por Tipo de Emoção")
+```
+## Não existe diferença de reconhecimento na emoção entre grupo clínico e não clínico
+
+
+```{r}
+
+# Vamos buscar as colunas de interpretação no dataframe original 'data'
+# e juntar ao 'data_mixed' usando a coluna Participants como chave
+data_mixed <- data_mixed %>%
+  left_join(data %>% select(Participants, BAI_Interpretation, BDI_Interpretation), 
+            by = "Participants")
+
+# Verifique se agora elas apareceram
+names(data_mixed)
+
+# Criar grupos binários (Ex: Moderado/Grave = 1, Mínimo/Leve = 0)
+# Ajuste os números 3 e 4 baseados na sua legenda do Excel (verifique seus dados)
+data_mixed <- data_mixed %>%
+  mutate(
+    Grupo_Depressao = ifelse(BDI_Interpretation >= 3, "Clinico", "Controle"),
+    Grupo_Ansiedade = ifelse(BAI_Interpretation >= 3, "Clinico", "Controle")
+  )
+
+# Modelo para Grupo de Depressão
+model_grupo_bdi <- glmer(Congruence ~ Grupo_Depressao * Intended_Emotion + 
+                         (1 | Participants) + (1 | Stimulus_ID),
+                         data = data_mixed, family = binomial,
+                         control = glmerControl(optimizer = "bobyqa"))
+
+summary(model_grupo_bdi)
+```
+
+# Variáveis SD
+
+```{r}
+# 1. Limpar tentativas anteriores de join incorreto (remover sufixos .x e .y se existirem)
+# Isso garante que estamos trabalhando com o dataframe limpo antes de tentar de novo
+data_mixed <- data_mixed %>%
+  select(!matches("\\.y$")) %>%  # Remove colunas terminadas em .y
+  rename_with(~ str_remove(., "\\.x$"), matches("\\.x$")) # Remove o .x das originais se houver
+
+# 2. Selecionar APENAS as variáveis NOVAS (Corrigido: removido o 'Group')
+demograficos_novos <- data %>% 
+  dplyr::select(Participants, Sex, Age, `Years of study`, `Years of musical education`) 
+  # Note que removi 'Group' desta lista acima
+
+# 3. Juntar ao data_mixed
+data_mixed <- data_mixed %>%
+  left_join(demograficos_novos, by = "Participants")
+
+# 4. Verificar se funcionou (veja se 'Group' e 'Sex' aparecem corretamente)
+print(names(data_mixed))
+
+# 5. AGORA sim, criar os fatores
+data_mixed <- data_mixed %>%
+  mutate(
+    Group_Factor = factor(Group, levels = c(2, 1), labels = c("Nao-Musico", "Musico")), 
+    Sex_Factor = factor(Sex, levels = c(1, 2), labels = c("Feminino", "Masculino"))
+  )
+
+# Verifique o resultado final
+head(data_mixed %>% select(Participants, Group_Factor, Sex_Factor))
+
+```
+
+## Músicos X Não-Músicos
+
+Não há diferença
+
+```{r}
+model_musicos <- glmer(Congruence ~ Group_Factor * Intended_Emotion + 
+                         (1 | Participants) + 
+                         (1 | Stimulus_ID),
+                       data = data_mixed, 
+                       family = binomial,
+                       control = glmerControl(optimizer = "bobyqa"))
+
+summary(model_musicos)
+
+```
+
+## Anos de estudo musical
+
+Não há diferença
+
+```{r}
+model_anos_musica <- glmer(Congruence ~ `Years of musical education` * Intended_Emotion + 
+                             (1 | Participants) + 
+                             (1 | Stimulus_ID),
+                           data = data_mixed, 
+                           family = binomial,
+                           control = glmerControl(optimizer = "bobyqa"))
+
+summary(model_anos_musica)
+
+```
+
+## Sexo e Idade
+
+Homens têm desempenho pior que Mulheres.
+Homens têm cerca de 31% menos chance de acertar do que as mulheres.
+
+```{r}
+model_demo <- glmer(Congruence ~ Sex_Factor + Age + `Years of study` +
+                      (1 | Participants) + 
+                      (1 | Stimulus_ID),
+                    data = data_mixed, 
+                    family = binomial,
+                    control = glmerControl(optimizer = "bobyqa"))
+
+summary(model_demo)
+
+```
+
+## Músicos têm maior Habilidade Geral (G)?
+
+```{r}
+
+# 1. Trazer o G_Score do dataframe original 'data' para o 'data_mixed'
+data_mixed <- data_mixed %>%
+  left_join(data %>% select(Participants, G_Score), by = "Participants")
+
+# 2. Modelo Linear (LM) com o Escore Geral
+# Usamos distinct() para ter apenas uma linha por participante (já que o G_Score é igual para todas as tentativas da mesma pessoa)
+dados_por_pessoa <- data_mixed %>% 
+  distinct(Participants, .keep_all = TRUE)
+
+model_global <- lm(G_Score ~ Group_Factor + Sex_Factor + Age + `Years of study`, 
+                   data = dados_por_pessoa)
+
+summary(model_global)
+```
+
+## Não linearidade
+
+### Árvore de decisão
+
+É possível que as divisões sejam overfitting, por isso vale testar a poda, abaixo.
+
+```{r}
+
+
+# 1. Selecionar apenas as variáveis que fazem sentido para prever o G_Score
+# (Usando o dataframe 'dados_por_pessoa' que já tem o G_Score e 1 linha por sujeito)
+dados_tree <- dados_por_pessoa %>%
+  select(
+    G_Score, 
+    Sex_Factor, 
+    Age, 
+    `Years of study`, 
+    Group_Factor,        # Músico vs Não
+    `Years of musical education`,
+    BAI, 
+    BDI
+  )
+
+# 2. Rodar a Árvore de Regressão
+# cp = 0.01 é o parâmetro de complexidade padrão. 
+# Se a árvore não crescer, tentaremos baixar isso só pra ver se existe algum sinal fraco.
+arvore <- rpart(G_Score ~ ., 
+                data = dados_tree, 
+                method = "anova")
+
+# 3. Visualizar
+print("--- Resumo da Árvore ---")
+printcp(arvore) # Mostra se valeu a pena dividir os dados
+
+# Plotar (Se houver algo para plotar)
+rpart.plot(arvore, main = "Árvore de Decisão para Habilidade Emocional (G)")
+
+```
+
+### Árvore com poda
+
+A única variável preditora foi sexo, de fato.
+
+```{r}
+# 1. Rodar a árvore "Grande" (igual você já fez, mas garantindo que ela cresça)
+# Definimos um cp bem baixo (0.001) para ela crescer bastante antes de podar
+arvore_completa <- rpart(G_Score ~ ., 
+                         data = dados_tree, 
+                         method = "anova",
+                         control = rpart.control(cp = 0.001))
+
+# 2. Visualizar a tabela de complexidade (Isso mostra onde o erro é menor)
+printcp(arvore_completa)
+plotcp(arvore_completa) # Gráfico do erro vs tamanho da árvore
+
+# 3. Identificar automaticamente o melhor CP (aquele com menor erro de validação)
+best_cp_index <- which.min(arvore_completa$cptable[, "xerror"])
+best_cp <- arvore_completa$cptable[best_cp_index, "CP"]
+
+# 4. Podar a árvore usando esse CP ideal
+arvore_podada <- prune(arvore_completa, cp = best_cp)
+
+# 5. Plotar a Árvore Podada (A versão "Honesta")
+rpart.plot(arvore_podada, 
+           main = "Árvore de Decisão Podada (Estatísticamente Robusta)",
+           type = 3, 
+           extra = 101, 
+           under = TRUE, 
+           fallen.leaves = TRUE,
+           box.palette = "BuOr")
+```
+
+# Reisenzein
+
+
+```{r}
+# --- TESTE DA HIPÓTESE DE REISENZEIN NO ESTUDO DE MÚSICA ---
+
+# 1. Preparação: Centralizar as escalas (Crucial para a geometria)
+# A SAM geralmente vai de 1 a 9. O "ponto zero" (neutro) é 5.
+# Para Reisenzein, a intensidade é a distância do centro.
+
+data_reisenzein <- data_long %>%
+  mutate(
+    # Transformar escala 1-9 para -4 a +4 (onde 0 é neutro)
+    Valence_Centrada = Valence - 5,
+    Arousal_Centrado = Arousal - 5,
+    
+    # Calcular a Magnitude Vetorial (Hipótese de Reisenzein)
+    # Quão longe do centro neutro a música foi percebida?
+    Intensidade_Vetorial = sqrt(Valence_Centrada^2 + Arousal_Centrado^2)
+  )
+
+# --- PERGUNTA 1: A Intensidade Vetorial prediz o Reconhecimento (Congruência)? ---
+# Hipótese: Se Reisenzein estiver certo e intensidade for apenas extremidade, 
+# músicas mais extremas (maior vetor) deveriam ser mais fáceis de reconhecer.
+
+modelo_vetorial <- glmer(Congruence ~ Intensidade_Vetorial + 
+                           (1 | Participants) + (1 | Stimulus_ID),
+                         data = data_reisenzein,
+                         family = binomial,
+                         control = glmerControl(optimizer = "bobyqa"))
+
+print("--- EFEITO DA INTENSIDADE VETORIAL NO ACERTO ---")
+summary(modelo_vetorial)
+
+# --- PERGUNTA 2: Comparação com o Fator Geral (G_Ability) ---
+# Se você tiver os escores fatoriais por estímulo (dificuldade do item), 
+# podemos ver se a dificuldade se correlaciona com a extremidade vetorial.
+
+# Primeiro, extraímos a dificuldade dos itens (b_i) da sua TRI ou as médias de acerto
+item_difficulty <- data_reisenzein %>%
+  group_by(Stimulus_ID, Intended_Emotion) %>%
+  summarise(
+    Media_Acerto = mean(Congruence, na.rm = TRUE),
+    Media_Intensidade_Vetorial = mean(Intensidade_Vetorial, na.rm = TRUE),
+    Media_Valence = mean(Valence_Centrada, na.rm = TRUE),
+    Media_Arousal = mean(Arousal_Centrado, na.rm = TRUE)
+  )
+
+# Correlação: Músicas "vetorialmente intensas" são mais acertadas?
+cor_music <- cor.test(item_difficulty$Media_Acerto, item_difficulty$Media_Intensidade_Vetorial, method = "spearman")
+
+print("--- CORRELAÇÃO: ACERTO X INTENSIDADE VETORIAL (Nível do Item) ---")
+print(cor_music)
+
+# Visualização (O "V" ou "U" invertido no desempenho)
+library(ggplot2)
+ggplot(item_difficulty, aes(x = Media_Valence, y = Media_Acerto)) +
+  geom_point(aes(size = Media_Intensidade_Vetorial, color = Intended_Emotion)) +
+  geom_smooth(method = "loess", color = "black", linetype = "dashed") +
+  labs(
+    title = "Desempenho por Valência e Intensidade Vetorial",
+    subtitle = "O tamanho da bolha é a Intensidade de Reisenzein (Distância do centro)",
+    x = "Valência Média (Centrada)",
+    y = "Taxa de Acerto (Congruência)"
+  ) +
+  theme_minimal()
+```
+
+
+```{r}
+sessionInfo()
+```
