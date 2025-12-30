@@ -69,18 +69,19 @@ Cada pasta contém um arquivo RMarkdown (`.Rmd`) que gera o relatório completo 
 ![Scatter Plot Saliência vs Vetor](images/scatter_semantica.png)
 > *Figura 1: A correlação negativa (r = -0.71) entre a Saliência Semântica real e a Intensidade Vetorial teórica demonstra a necessidade de uma revisão hierárquica do modelo: a intensidade na linguagem não é apenas um vetor, mas uma dimensão de magnitude.*
 
-### O Fator Geral Fisiológico
-<!-- Insira a imagem do gráfico na pasta 'images' e ajuste o nome abaixo -->
-![PCA Fisiologia](images/pca_fisiologia.png)
-> *Figura 2: A convergência de todas as métricas de condutância da pele (GSR/EDA) em um único componente principal unipolar confirma a existência de uma dimensão de Intensidade Fisiológica independente da valência.*
+### A Dissociação Psicofisiológica
+<!-- Insira aqui a imagem do Forest Plot que você mandou -->
+![Modelo Misto Fisiologia](images/forest_plot_gsr.png)
+
+> *Figura 2: Análise de coeficientes (Modelo Linear Misto) demonstrando que o 'Arousal' normativo (subjetivo) não prediz significativamente a Intensidade Fisiológica (GSR/EDA). O intervalo de confiança cruzando a linha zero (tracejada) confirma que a mobilização biológica é uma dimensão distinta da ativação percebida, exigindo uma nova taxonomia para sistemas de IA.*
 
 ---
 
 ## 📝 Citação
 
-Se você utilizar estes dados, códigos ou a taxonomia proposta, por favor cite:
+Se você utilizar os códigos ou a taxonomia proposta, por favor cite:
 
-> **Pedrosa, F. G. (2025).** *song_sent_scores: Computational Design for Charting Dynamic Emotion in Songs with a Multimodal Circumplex Framework*. GitHub Repository. Disponível em: https://github.com/FredPedrosa/youtube_circumplex
+> **Pedrosa, F. G. (2025).** *Intensidade, Saliência e Magnitude do Afeto: a recorrência do Fator Geral em dados secundários*. GitHub Repository. Disponível em: https://github.com/FredPedrosa/Intensity_DT 
 
 ---
 
