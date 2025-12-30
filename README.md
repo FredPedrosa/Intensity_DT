@@ -76,7 +76,7 @@ Cada pasta contém um arquivo RMarkdown (`.Rmd`) que gera o relatório completo 
 
 Se você utilizar os códigos ou a taxonomia proposta, por favor cite:
 
-> **Pedrosa, F. G. (2025).** *Intensidade, Saliência e Magnitude do Afeto: a recorrência do Fator Geral em dados secundários*. GitHub Repository. Disponível em: https://github.com/FredPedrosa/Intensity_DT
+> **Pedrosa, F. G. (2025).** *Intensidade, Saliência e Magnitude do Afeto: a recorrência da Estrutura Hierárquica*. GitHub Repository. Disponível em: https://github.com/FredPedrosa/Intensity_DT
 
 ---
 
