@@ -24,19 +24,19 @@ Investigação da estrutura latente da linguagem afetiva natural.
 - **Método:** Extração de *Word Embeddings* (BERT/MPNet) e análise dimensional (PCA e PLS-SEM).
 - **Principal Achado:** Identificação de uma correlação negativa robusta ($r = -0.71$) entre a Saliência Semântica (PC1) e a Intensidade Vetorial teórica de Reisenzein, sugerindo que a intensidade na linguagem é uma dimensão de magnitude independente.
 
-### 📂 2. Estrutura do Autorrelato (PANAS)
+### 1.1. Estrutura do Autorrelato (PANAS)
 Investigação da estrutura fenomenológica da experiência subjetiva.
 - **Dados:** Amostra brasileira respondendo à escala PANAS ($N=457$).
 - **Método:** Análise Fatorial Confirmatória (CFA) e Modelos Bifatoriais.
 - **Principal Achado:** Na experiência subjetiva, a "Intensidade" tende a colapsar com o Afeto Negativo (*Distress*), diferenciando-se da estrutura semântica pura.
 
-### 📂 3. Análise Fisiológica (GSR/EDA)
+### 📂 2. Análise Fisiológica (GSR/EDA)
 Reanálise de dados psicofisiológicos para testar a unipolaridade da ativação.
 - **Dados:** Dataset secundário EMO2018-SCR (Juuse et al., 2024), contendo condutância da pele de 102 participantes.
 - **Método:** Análise de Decomposição Contínua (CDA) e PCA sobre métricas de reatividade (Frequência, Amplitude, Área sob a Curva).
 - **Principal Achado:** Todas as métricas fisiológicas carregam positivamente em um único **Fator Geral de Intensidade Fisiológica**. Isso refuta a ideia de *arousal* bipolar no nível autonômico e confirma a existência de uma dimensão de "Mobilização de Energia" bruta que precede a qualificação emocional.
 
-### 📂 4. Percepção Musical (MEET)
+### 📂 3. Percepção Musical (MEET)
 Evidência da hierarquia no domínio auditivo (Estudo "Marília").
 - **Dados:** Respostas de 200 participantes a 116 estímulos musicais originais, compostos teoricamente para representar os 4 quadrantes afetivos distintos (Alegria, Medo/Raiva, Tristeza, Serenidade).
 - **Método:** Teoria de Resposta ao Item (TRI) e Modelagem Bifatorial.
