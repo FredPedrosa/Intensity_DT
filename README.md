@@ -6,7 +6,7 @@
 
 ## 📋 Sobre o Projeto
 
-Este repositório contém os códigos-fonte, datasets processados e rotinas de análise estatística que fundamentam o projeto de pesquisa **"Desenvolvimento, Validação e Aplicação Clínica de Sistemas Inteligentes para Avaliação Afetiva em Musicoterapia"**.
+Este repositório contém os códigos-fonte, datasets processados e rotinas de análise estatística que fundamentam o projeto de pesquisa **"Desenvolvimento de Sistema Inteligente Multimodal para Musicoterapia baseado na Estrutura Hierárquica do Afeto"**.
 
 O objetivo central é demonstrar empiricamente a existência de uma **Estrutura Hierárquica do Afeto**, onde a **Intensidade** (Saliência/Magnitude) atua como uma dimensão primária e unipolar, distinta do *Arousal* (ativação) e da *Valência* (prazer-desprazer) do modelo circumplexo tradicional.
 
